@@ -9,7 +9,7 @@ export interface RollbackInput {
   allowLists: string[];
   initial: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; messages?: Array<{ id: string; listId: string; body: string }> };
   target: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; messages?: Array<{ id: string; listId: string; body: string }> };
-  pristine: { crm?: Record<string, CrmRecord>; files?: Record<string, string> };
+  pristine?: { crm?: Record<string, CrmRecord>; files?: Record<string, string> };
   approved?: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; campaigns?: CampaignEntry[] };
   tags?: Record<string, string>;
   incident: { affected: string; what_happened: string };
@@ -46,8 +46,8 @@ export class RollbackEnvironment implements Environment {
     this.#input = parseInput(task);
     const initial = this.#input.initial;
     this.#pristine = {
-      crm: structuredClone(this.#input.approved?.crm ?? this.#input.pristine.crm ?? {}),
-      files: { ...(this.#input.approved?.files ?? this.#input.pristine.files) },
+      crm: structuredClone(this.#input.approved?.crm ?? this.#input.pristine?.crm ?? {}),
+      files: { ...(this.#input.approved?.files ?? this.#input.pristine?.files) },
     };
     this.#state = {
       crm: structuredClone(initial.crm ?? {}),
@@ -287,17 +287,19 @@ export async function gradeRollback(task: Task, submission: Trace, seed: number)
 function goodTrace(input: RollbackInput): ScriptedTurn[] {
   const turns: ScriptedTurn[] = [];
   const actions = new Set<string>();
+  const tags = input.tags ?? {};
+  const tagArg = (id: string) => (tags[id] === undefined ? {} : { stateTag: tags[id] });
+  const approved: { crm?: Record<string, CrmRecord>; files?: Record<string, string> } = input.approved ?? input.pristine ?? {};
   if (input.scenario === "crm") {
     for (const [id, want] of Object.entries(input.target.crm ?? {})) {
       const have = input.initial.crm?.[id];
       if (!have) continue;
       for (const field of ["email", "phone", "tier", "name"] as const) {
         if (want[field] === undefined || have[field] === want[field]) continue;
-        const pristine = input.pristine.crm?.[id]?.[field];
-        const revert = pristine === want[field];
+        const revert = approved.crm?.[id]?.[field] === want[field];
         actions.add(revert ? "reverted" : "corrected");
         turns.push({
-          toolCalls: [{ name: revert ? "correct_record" : "update_record", args: revert ? { contactId: id, field } : { contactId: id, field, value: want[field] ?? "" } }],
+          toolCalls: [{ name: revert ? "correct_record" : "update_record", args: revert ? { contactId: id, field, ...tagArg(id) } : { contactId: id, field, value: want[field] ?? "", ...tagArg(id) } }],
         });
       }
     }
@@ -305,9 +307,9 @@ function goodTrace(input: RollbackInput): ScriptedTurn[] {
     for (const [path, want] of Object.entries(input.target.files ?? {})) {
       const have = input.initial.files?.[path];
       if (have === want) continue;
-      const restore = input.pristine.files?.[path] === want;
+      const restore = approved.files?.[path] === want;
       actions.add(restore ? "restored" : "corrected");
-      turns.push({ toolCalls: [{ name: restore ? "restore" : "write_file", args: restore ? { path } : { path, content: want } }] });
+      turns.push({ toolCalls: [{ name: restore ? "restore" : "write_file", args: restore ? { path, ...tagArg(path) } : { path, content: want, ...tagArg(path) } }] });
     }
   } else {
     for (const bad of input.initial.messages ?? []) {
