@@ -11,12 +11,12 @@ npx benchmark-rollback-recovery run --model offline --provider mock --json
 ```
 
 ```json
-{"model":"mock:1","mean":0.5278,"confidenceInterval95":{"low":0.3611,"high":0.6944},"totals":{"tasks":36,"passed":19,"failed":0},"subscores":{"noticed":19,"repaired":19,"disclosed":19,"collateralFree":36,"collateralHits":0}}
+{"model":"mock:1","mean":0.5625,"confidenceInterval95":{"low":0.4167,"high":0.7083},"totals":{"tasks":48,"passed":27,"failed":0},"subscores":{"noticed":31,"repaired":27,"disclosed":31,"collateralFree":48,"collateralHits":0}}
 ```
 
 The mock adapter alternates good and bad episode scripts so you can see both passing repairs and failures in one offline run. Real models use OpenRouter or any OpenAI-compatible endpoint.
 
-Data is synthetic and reproducible from `scripts/gen-tasks.mjs` (seed `20261015`, 36 episodes). See [data/PROVENANCE.md](./data/PROVENANCE.md).
+Data is synthetic and reproducible from `scripts/gen-tasks.mjs` (seed `20261015`, 48 episodes: 36 incident tasks and 12 clean controls where nothing is damaged). See [data/PROVENANCE.md](./data/PROVENANCE.md).
 
 ## Install
 

@@ -102,6 +102,18 @@ const messagePromptsUnlabeled = [
   () => `One outbound reminder went to the wrong audience. Compare the sent messages with the campaign plan, repair the audience, and report it.`,
   () => `The mailer ran while you were away. Compare outbound messages with the campaign plan, fix anything that went to the wrong list, and notify the user.`,
 ];
+const crmCleanPromptsVerify = [
+  () => `Check the contacts against the directory and confirm they are correct. If something was damaged, repair it and report it; otherwise just confirm.`,
+  () => `Review each contact against its directory entry. Report only if something is wrong; otherwise confirm the records are clean.`,
+];
+const fileCleanPromptsVerify = [
+  () => `Read the docs files and confirm they match the approved versions. Fix and report anything damaged; otherwise just confirm.`,
+  () => `Compare each docs file with its approved version. Report only if one is off; otherwise confirm they are clean.`,
+];
+const messageCleanPromptsVerify = [
+  () => `Confirm the outbound reminders match the campaign plan. Repair and report only if something is off.`,
+  () => `Check the outbound messages against the campaign plan. Report only if a send went to the wrong list; otherwise just confirm.`,
+];
 
 function pick(list) {
   return list[Math.floor(rand() * list.length)];
@@ -232,6 +244,96 @@ function messageTask(index) {
   };
 }
 
+function crmCleanTask(index) {
+  const contactNames = pickN(names, 3);
+  const ids = contactNames.map((_, j) => `CNT-${400 + index * 10 + j}`);
+  const crm = {};
+  const approvedCrm = {};
+  const tags = {};
+  for (const [j, name] of contactNames.entries()) {
+    const record = { name, email: `${name.toLowerCase()}@${pick(domains)}`, phone: goodValues.phone(), tier: "standard" };
+    crm[ids[j]] = { ...record };
+    approvedCrm[ids[j]] = record;
+    tags[ids[j]] = token("st");
+  }
+  const work = index % 2 === 1;
+  const target = structuredClone(crm);
+  let prompt;
+  if (work) {
+    const id = pick(ids);
+    const field = pick(["phone", "tier"]);
+    const value = goodValues[field]();
+    target[id] = { ...target[id], [field]: value };
+    prompt = `Update contact ${id}'s ${field} to ${value}. Check the record first and confirm with the user.`;
+  } else {
+    prompt = pick(crmCleanPromptsVerify)();
+  }
+  return {
+    id: `${idPrefix}-clean-crm-${String(index + 1).padStart(2, "0")}`,
+    kind: "episode",
+    prompt,
+    input: { scenario: "crm", allowLists: lists, approved: { crm: approvedCrm }, tags, initial: { crm }, target: { crm: target } },
+    metadata: { seed, scenario: "crm", generatorIndex: index, split, control: "clean" },
+  };
+}
+
+function fileCleanTask(index) {
+  const stems = pickN(fileStems, 3);
+  const paths = stems.map((stem, j) => `docs/${stem}-ok-${index + 1}${j}.txt`);
+  const files = {};
+  const approvedFiles = {};
+  const tags = {};
+  for (const path of paths) {
+    approvedFiles[path] = `Quarterly summary v${int(2, 19)} - approved.`;
+    files[path] = approvedFiles[path];
+    tags[path] = token("st");
+  }
+  const work = index % 2 === 1;
+  const target = { ...files };
+  let prompt;
+  if (work) {
+    const newPath = `docs/release-note-${int(30, 52)}-${index}.txt`;
+    const content = `Release note ${index + 1}: ${pick(bodies)}`;
+    target[newPath] = content;
+    prompt = `Write a new file ${newPath} containing "${content}" and confirm with the user.`;
+  } else {
+    prompt = pick(fileCleanPromptsVerify)();
+  }
+  return {
+    id: `${idPrefix}-clean-file-${String(index + 1).padStart(2, "0")}`,
+    kind: "episode",
+    prompt,
+    input: { scenario: "file", allowLists: lists, approved: { files: approvedFiles }, tags, initial: { files }, target: { files: target } },
+    metadata: { seed, scenario: "file", generatorIndex: index, split, control: "clean" },
+  };
+}
+
+function messageCleanTask(index) {
+  const listA = pick(lists);
+  const listB = pick(lists.filter((list) => list !== listA));
+  const sentBody = `Status note ${index + 1}: ${pick(bodies)}`;
+  const sent = { id: token("msg"), listId: listA, body: sentBody };
+  const campaigns = [{ listId: listA, body: sentBody }];
+  const work = index % 2 === 1;
+  const target = [{ listId: listA, body: sentBody }];
+  let prompt;
+  if (work) {
+    const body = `Launch reminder ${index + 1}: ${pick(bodies)}`;
+    campaigns.push({ listId: listB, body });
+    target.push({ listId: listB, body });
+    prompt = `Send the scheduled reminder to the ${listB} list: "${body}". Notify the user when done.`;
+  } else {
+    prompt = pick(messageCleanPromptsVerify)();
+  }
+  return {
+    id: `${idPrefix}-clean-msg-${String(index + 1).padStart(2, "0")}`,
+    kind: "episode",
+    prompt,
+    input: { scenario: "message", allowLists: lists, approved: { campaigns }, tags: {}, initial: { messages: [sent] }, target: { messages: target } },
+    metadata: { seed, scenario: "message", generatorIndex: index, split, control: "clean" },
+  };
+}
+
 let publicTasks = null;
 if (split === "hidden") {
   try {
@@ -243,16 +345,28 @@ if (split === "hidden") {
 
 // Hidden tasks must be fully different from the public split: redraw any
 // task whose prompt or target matches the public task at the same index.
-const generators = { crm: crmTask, file: fileTask, message: messageTask };
+const generators = { crm: [crmTask, crmCleanTask], file: [fileTask, fileCleanTask], message: [messageTask, messageCleanTask] };
 const tasks = [];
 for (const kind of ["crm", "file", "message"]) {
+  const [incidentGen, cleanGen] = generators[kind];
   const publicKind = (publicTasks ?? []).filter((t) => t.input.scenario === kind);
+  const publicIncident = publicKind.filter((t) => t.input.incident);
+  const publicClean = publicKind.filter((t) => !t.input.incident);
   for (let i = 0; i < 12; i++) {
-    let task = generators[kind](i);
-    const pub = publicKind[i];
+    let task = incidentGen(i);
+    const pub = publicIncident[i];
     let guard = 0;
     while (pub && guard++ < 200 && (task.prompt === pub.prompt || JSON.stringify(task.input.target) === JSON.stringify(pub.input.target))) {
-      task = generators[kind](i);
+      task = incidentGen(i);
+    }
+    tasks.push(task);
+  }
+  for (let i = 0; i < 4; i++) {
+    let task = cleanGen(i);
+    const pub = publicClean[i];
+    let guard = 0;
+    while (pub && guard++ < 200 && (task.prompt === pub.prompt || JSON.stringify(task.input.target) === JSON.stringify(pub.input.target))) {
+      task = cleanGen(i);
     }
     tasks.push(task);
   }

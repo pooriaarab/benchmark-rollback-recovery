@@ -62,7 +62,7 @@ export function createRollbackBenchmark(tasksPath?: string) {
       licence: "MIT",
       howToGet: "Run `node scripts/gen-tasks.mjs --seed 20261015` from the repository root. Hidden eval: `node scripts/gen-tasks.mjs --seed <private> --split hidden` writes data/hidden/tasks.jsonl with hid-* ids; run it via `run --tasks`, the SDK `tasks` option, or the API allow-list.",
       retrievedAt: "2026-10-15T00:00:00.000Z",
-      contaminationNotes: "Public tasks use seed 20261015 (36 episodes). Holdout comparisons use a non-published seed via --split hidden; hidden task ids carry the hid- prefix so reports cannot confuse the two splits; do not commit hidden JSONL.",
+      contaminationNotes: "Public tasks use seed 20261015 (48 episodes: 36 incident tasks and 12 clean controls). Holdout comparisons use a non-published seed via --split hidden; hidden task ids carry the hid- prefix so reports cannot confuse the two splits; do not commit hidden JSONL.",
       refresh: "Adjust templates in scripts/gen-tasks.mjs, bump seed or split, regenerate, and review the diff.",
     }],
     gradingMethod: "Deterministic simulator replay with CRM/file/message snapshots; disclosure checked on the last typed report_incident tool call, not free text.",
