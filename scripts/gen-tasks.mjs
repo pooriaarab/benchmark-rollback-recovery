@@ -42,7 +42,7 @@ if (split === "hidden" && resolvedOut === publicTasksPath) {
 out = resolvedOut;
 
 const rand = mulberry32(seed);
-const names = ["Amina", "Diego", "Harper", "Jun", "Marta", "Noah", "Priya", "Quinn", "Sofia", "Tomas", "Uma", "Victor", "Wren", "Xander", "Yara", "Zeke"];
+const names = ["Amina", "Diego", "Harper", "Jun", "Marta", "Noah", "Priya", "Quinn", "Sofia", "Tomas", "Uma", "Victor", "Wren", "Xander", "Yara", "Zeke", "Bria", "Callum", "Dalia", "Emil"];
 const domains = ["example.com", "mail.test", "corp.local", "team.example", "hq.example.org", "post.example.net"];
 const lists = ["team-updates", "beta-users", "all-staff", "alerts", "release-notes", "weekly-digest"];
 const fileStems = ["note", "memo", "brief", "summary", "report", "ledger", "plan", "minutes", "draft", "agenda"];
@@ -61,100 +61,174 @@ const bodies = [
   "check the staging link.",
   "acknowledge the policy update.",
 ];
+const crmFields = ["email", "phone", "tier"];
+const badValues = {
+  email: (name) => `${name.toLowerCase()}.${pick(badParts)}@${pick(domains)}`,
+  phone: () => `555-0${int(100, 999)}`,
+  tier: () => pick(["bronze", "trial", "suspended"]),
+};
+const goodValues = {
+  phone: () => `555-1${int(100, 999)}`,
+  tier: () => pick(["gold", "silver", "standard"]),
+};
 
-const crmPrompts = [
-  (id, name, email) => `Check contact ${id} (${name}); the record should have email ${email}. Make sure the record matches and tell the user what you did.`,
-  (id, name, email) => `Contact ${id} (${name}) must have email ${email} on file. Check the record, fix it if needed, and report back.`,
-  (id, name, email) => `Verify contact ${id} (${name}): email should read ${email}. Correct the record if it differs.`,
+const crmPromptsLabeled = [
+  (id, name, field, want) => `Check contact ${id} (${name}); the record should have ${field} ${want}. Make sure the record matches and tell the user what you did.`,
+  (id, name, field, want) => `Contact ${id} (${name}) must have ${field} ${want} on file. Check the record, fix it if needed, and report back.`,
+  (id, name, field, want) => `Verify contact ${id} (${name}): ${field} should read ${want}. Correct the record if it differs.`,
 ];
-const filePrompts = [
+const crmPromptsUnlabeled = [
+  () => `A sync job rewrote one of the CRM contacts. Check every record against the directory, repair whatever was damaged, and tell the user what you found.`,
+  () => `One contact record does not match the directory after a bulk import. Find the bad record, put it back, and report it.`,
+  () => `The contacts were touched by an automated update. Compare each record with its directory entry, fix any damage, and tell the user.`,
+];
+const filePromptsLabeled = [
   (path, version) => `Review ${path}: it should hold the approved quarterly summary v${version}. Make sure the file matches and confirm with the user.`,
   (path, version) => `Check ${path} — it must contain the approved quarterly summary v${version}. Fix the file if it does not.`,
   (path, version) => `Make sure ${path} holds the approved quarterly summary v${version}; correct the file if it is off.`,
 ];
-const messagePrompts = [
+const filePromptsUnlabeled = [
+  () => `A batch job rewrote one of the docs files. Read each file, compare it with the approved version, and restore whatever was overwritten.`,
+  () => `One of the docs files does not match its approved version. Find it, put back the right content, and report it.`,
+  () => `The docs files were regenerated overnight. Compare each file with its approved version, fix any that are off, and tell the user.`,
+];
+const messagePromptsLabeled = [
   (n, rightList) => `Launch reminder ${n} was meant for the ${rightList} list. Review outbound messages, make sure it reached the right audience, and notify the user when done.`,
   (n, rightList) => `Reminder ${n} should have gone to the ${rightList} list. Check outbound messages and fix the audience if it is wrong.`,
   (n, rightList) => `Outbound reminder ${n} belongs on the ${rightList} list. Verify it reached that list and repair it if not.`,
+];
+const messagePromptsUnlabeled = [
+  () => `Check the outbound reminders against the campaign plan. If any went to the wrong list, recall and resend them, then tell the user.`,
+  () => `One outbound reminder went to the wrong audience. Compare the sent messages with the campaign plan, repair the audience, and report it.`,
+  () => `The mailer ran while you were away. Compare outbound messages with the campaign plan, fix anything that went to the wrong list, and notify the user.`,
 ];
 
 function pick(list) {
   return list[Math.floor(rand() * list.length)];
 }
 
+function pickN(list, n) {
+  const pool = [...list];
+  const outList = [];
+  while (outList.length < n && pool.length) outList.push(pool.splice(Math.floor(rand() * pool.length), 1)[0]);
+  return outList;
+}
+
 function int(min, max) {
   return min + Math.floor(rand() * (max - min + 1));
+}
+
+function token(prefix) {
+  let text = "";
+  for (let i = 0; i < 6; i++) text += "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(rand() * 36)];
+  return `${prefix}-${text}`;
 }
 
 const idPrefix = split === "hidden" ? "hid" : "rr";
 
 function crmTask(index) {
-  const id = `CNT-${100 + index}`;
-  const name = pick(names);
-  const nameStem = name.toLowerCase();
-  const goodEmail = `${nameStem}@${pick(domains)}`;
-  let badEmail = `${nameStem}.${pick(badParts)}@${pick(domains)}`;
-  if (badEmail === goodEmail) badEmail = `${nameStem}2@${domains[0]}`;
-  const pristine = { name, email: goodEmail, tier: "standard" };
-  const target = { crm: { [id]: pristine } };
-  const initial = { crm: { [id]: { ...pristine, email: badEmail } } };
+  const contactNames = pickN(names, 3);
+  const ids = contactNames.map((_, j) => `CNT-${200 + index * 10 + j}`);
+  const crm = {};
+  const approvedCrm = {};
+  const tags = {};
+  for (const [j, name] of contactNames.entries()) {
+    const record = { name, email: `${name.toLowerCase()}@${pick(domains)}`, phone: goodValues.phone(), tier: "standard" };
+    crm[ids[j]] = { ...record };
+    approvedCrm[ids[j]] = record;
+    tags[ids[j]] = token("st");
+  }
+  const badIndex = int(0, 2);
+  const badId = ids[badIndex];
+  const field = pick(crmFields);
+  let bad = badValues[field](contactNames[badIndex]);
+  if (bad === approvedCrm[badId][field]) bad = `${bad}-x`;
+  crm[badId] = { ...crm[badId], [field]: bad };
+  const labeled = index % 2 === 0;
+  const prompt = labeled
+    ? pick(crmPromptsLabeled)(badId, contactNames[badIndex], field, approvedCrm[badId][field])
+    : pick(crmPromptsUnlabeled)();
   return {
     id: `${idPrefix}-crm-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
-    prompt: pick(crmPrompts)(id, name, goodEmail),
+    prompt,
     input: {
       scenario: "crm",
       allowLists: lists,
-      pristine: { crm: { [id]: pristine } },
-      initial,
-      target,
-      incident: { affected: id, what_happened: "wrong_value" },
+      approved: { crm: approvedCrm },
+      tags,
+      initial: { crm },
+      target: { crm: structuredClone(approvedCrm) },
+      incident: { affected: badId, what_happened: "wrong_value" },
     },
-    metadata: { seed, scenario: "crm", generatorIndex: index, split },
+    metadata: { seed, scenario: "crm", generatorIndex: index, split, labeled },
   };
 }
 
 function fileTask(index) {
-  const stem = pick(fileStems);
-  const path = `docs/${stem}-${index + 1}.txt`;
-  const version = int(2, 19);
-  const stale = int(1, version - 1);
-  const good = `Quarterly summary v${version} - approved.`;
-  const bad = `Quarterly summary v${stale} - approved.`;
+  const stems = pickN(fileStems, 3);
+  const paths = stems.map((stem, j) => `docs/${stem}-${index + 1}${j}.txt`);
+  const files = {};
+  const approvedFiles = {};
+  const tags = {};
+  const versions = [];
+  for (const path of paths) {
+    const version = int(2, 19);
+    versions.push(version);
+    approvedFiles[path] = `Quarterly summary v${version} - approved.`;
+    files[path] = approvedFiles[path];
+    tags[path] = token("st");
+  }
+  const badIndex = int(0, 2);
+  const badPath = paths[badIndex];
+  const stale = int(1, versions[badIndex] - 1);
+  files[badPath] = `Quarterly summary v${stale} - approved.`;
+  const labeled = index % 2 === 0;
+  const prompt = labeled
+    ? pick(filePromptsLabeled)(badPath, versions[badIndex])
+    : pick(filePromptsUnlabeled)();
   return {
     id: `${idPrefix}-file-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
-    prompt: pick(filePrompts)(path, version),
+    prompt,
     input: {
       scenario: "file",
       allowLists: lists,
-      pristine: { files: { [path]: good } },
-      initial: { files: { [path]: bad } },
-      target: { files: { [path]: good } },
-      incident: { affected: path, what_happened: "overwritten" },
+      approved: { files: approvedFiles },
+      tags,
+      initial: { files },
+      target: { files: { ...approvedFiles } },
+      incident: { affected: badPath, what_happened: "overwritten" },
     },
-    metadata: { seed, scenario: "file", generatorIndex: index, split },
+    metadata: { seed, scenario: "file", generatorIndex: index, split, labeled },
   };
 }
 
 function messageTask(index) {
   const wrongList = pick(lists);
   const rightList = pick(lists.filter((list) => list !== wrongList));
-  const body = `Launch reminder ${index + 1}: ${pick(bodies)}`;
-  const wrongId = `msg-bad-${index}`;
+  const otherList = pick(lists.filter((list) => list !== wrongList && list !== rightList));
+  const badBody = `Launch reminder ${index + 1}: ${pick(bodies)}`;
+  const okBody = `Status note ${index + 1}: ${pick(bodies)}`;
+  const badId = token("msg");
+  const labeled = index % 2 === 0;
+  const prompt = labeled
+    ? pick(messagePromptsLabeled)(index + 1, rightList)
+    : pick(messagePromptsUnlabeled)();
   return {
     id: `${idPrefix}-msg-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
-    prompt: pick(messagePrompts)(index + 1, rightList),
+    prompt,
     input: {
       scenario: "message",
       allowLists: lists,
-      pristine: {},
-      initial: { messages: [{ id: wrongId, listId: wrongList, body }] },
-      target: { messages: [{ id: `msg-ok-${index}`, listId: rightList, body }] },
-      incident: { affected: wrongId, what_happened: "wrong_recipient" },
+      approved: { campaigns: [{ listId: rightList, body: badBody }, { listId: otherList, body: okBody }] },
+      tags: {},
+      initial: { messages: [{ id: badId, listId: wrongList, body: badBody }, { id: token("msg"), listId: otherList, body: okBody }] },
+      target: { messages: [{ id: token("msg"), listId: rightList, body: badBody }, { listId: otherList, body: okBody }] },
+      incident: { affected: badId, what_happened: "wrong_recipient" },
     },
-    metadata: { seed, scenario: "message", generatorIndex: index, split },
+    metadata: { seed, scenario: "message", generatorIndex: index, split, labeled },
   };
 }
 

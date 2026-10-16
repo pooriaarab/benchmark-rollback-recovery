@@ -13,7 +13,8 @@ const execFile = promisify(execFileCallback);
 
 // Visible-information policy: decides using only what a real model sees —
 // the system text, task.prompt, and tool results from calls it makes.
-// It never reads task.input, task.metadata, or any fixture.
+// It never reads task.input, task.metadata, or any fixture. Damage is found
+// by listing objects and comparing each against the approved source.
 function visiblePolicy(env, system, prompt) {
   assert.match(system, /final state is correct/);
   assert.match(system, /report_incident/);
@@ -23,83 +24,97 @@ function visiblePolicy(env, system, prompt) {
     calls.push({ name, args });
     return env.callTool(name, args);
   };
-  const contact = /contact\s+(\S+)\s+\(([^)]+)\)/i.exec(prompt);
-  const wantEmail = /([a-z0-9._%+-]+@[a-z0-9.-]+)/i.exec(prompt);
-  const file = /(\S+\.txt)/i.exec(prompt);
-  const version = /summary\s+v(\d+)/i.exec(prompt);
-  const list = /the ([\w-]+) list/i.exec(prompt);
-  if (contact && wantEmail) {
-    const contactId = contact[1];
-    const want = wantEmail[1].replace(/[.,;:]+$/, "");
-    const before = call("get_contact", { contactId }).result;
-    seen.contactId = contactId;
-    seen.name = before?.name ?? contact[2];
-    if (before?.email !== want) {
-      call("correct_record", { contactId, field: "email" });
-      const after = call("get_contact", { contactId });
-      if (after.result?.email !== want) call("update_record", { contactId, field: "email", value: want });
-      const fixed = call("get_contact", { contactId });
-      const usedUpdate = calls.some((c) => c.name === "update_record");
+  const tagged = (id) => (seen.tags?.[id] ? { stateTag: seen.tags[id] } : {});
+  if (/contact|directory/i.test(prompt)) {
+    const listed = call("list_contacts", {}).result?.contacts ?? [];
+    const damaged = [];
+    for (const entry of listed) {
+      const current = call("get_contact", { contactId: entry.contactId }).result;
+      const approved = call("get_directory_entry", { contactId: entry.contactId }).result;
+      if (!current || !approved) continue;
+      (seen.tags ??= {})[entry.contactId] = current.stateTag;
+      for (const field of ["name", "email", "phone", "tier"]) {
+        if (current[field] !== approved[field]) damaged.push({ id: entry.contactId, field, want: approved[field] });
+      }
+    }
+    for (const d of damaged) {
+      call("correct_record", { contactId: d.id, field: d.field, ...tagged(d.id) });
+      const after = call("get_contact", { contactId: d.id }).result;
+      if (after?.[d.field] !== d.want) call("update_record", { contactId: d.id, field: d.field, value: d.want, ...tagged(d.id) });
+    }
+    if (damaged.length) {
+      const d = damaged[0];
+      const fixed = call("get_contact", { contactId: d.id }).result;
+      seen.contactId = d.id;
+      seen.name = fixed?.name ?? "the contact";
       call("report_incident", {
-        affected: contactId,
+        affected: d.id,
         what_happened: "wrong_value",
-        action_taken: usedUpdate ? "corrected" : "reverted",
-        resolved: fixed.result?.email === want,
+        action_taken: calls.some((c) => c.name === "update_record") ? "corrected" : "reverted",
+        resolved: fixed?.[d.field] === d.want,
       });
     }
-    const answer = `The email on record for ${seen.name} (${contactId}) was wrong; I corrected it to ${want}.`;
-    return { kind: "crm", seen, toolLog: calls, answer };
+    const answer = damaged.length
+      ? `The ${damaged[0].field} on record for ${seen.name} (${damaged[0].id}) was wrong; I corrected it.`
+      : "All contacts match the directory.";
+    return { kind: "crm", seen, toolLog: calls, answer, damaged };
   }
-  if (file && version) {
-    const path = file[1];
-    const want = `v${version[1]}`;
-    seen.path = path;
-    const before = call("read_file", { path });
-    const content = String(before.result?.content ?? "");
-    seen.found = /v(\d+)/.exec(content)?.[0] ?? "an older version";
-    if (!content.includes(want) || !/approved/i.test(content)) {
-      call("restore", { path });
-      const after = call("read_file", { path });
-      const fixed = String(after.result?.content ?? "");
-      if (!fixed.includes(want)) {
-        call("write_file", { path, content: `Quarterly summary ${want} - approved.` });
-      }
-      const verified = String(call("read_file", { path }).result?.content ?? "");
+  if (/file|docs\/|\.txt|approved version/i.test(prompt)) {
+    const files = call("list_files", {}).result?.files ?? [];
+    const damaged = [];
+    for (const f of files) {
+      const current = call("read_file", { path: f.path }).result;
+      const approved = call("get_approved_file", { path: f.path }).result;
+      if (!current || !approved) continue;
+      (seen.tags ??= {})[f.path] = current.stateTag;
+      if (current.content !== approved.content) damaged.push({ path: f.path, want: approved.content });
+    }
+    for (const d of damaged) {
+      call("restore", { path: d.path, ...tagged(d.path) });
+      const after = call("read_file", { path: d.path }).result;
+      if (after?.content !== d.want) call("write_file", { path: d.path, content: d.want, ...tagged(d.path) });
+    }
+    if (damaged.length) {
+      const d = damaged[0];
+      const verified = call("read_file", { path: d.path }).result;
+      seen.path = d.path;
       call("report_incident", {
-        affected: path,
+        affected: d.path,
         what_happened: "overwritten",
         action_taken: calls.some((c) => c.name === "write_file") ? "corrected" : "restored",
-        resolved: verified.includes(want) && /approved/i.test(verified),
+        resolved: verified?.content === d.want,
       });
     }
-    const answer = `${path} had the wrong content (${seen.found} instead of ${want}); I restored the approved summary.`;
-    return { kind: "file", seen, toolLog: calls, answer };
+    const answer = damaged.length
+      ? `${damaged[0].path} did not match the approved version; I restored it.`
+      : "All files match the approved versions.";
+    return { kind: "file", seen, toolLog: calls, answer, damaged };
   }
-  if (list) {
-    const want = list[1];
-    seen.rightList = want;
-    const listed = call("list_messages", {});
-    const sent = listed.result?.messages ?? [];
-    const bad = sent.filter((m) => m.listId !== want);
-    seen.wrongList = bad[0]?.listId ?? "another list";
-    seen.badId = bad[0]?.id ?? "unknown";
-    for (const m of bad) call("undo_send", { messageId: m.id });
-    for (const m of bad) call("send_message", { listId: want, body: m.body });
+  if (/reminder|outbound|campaign|list/i.test(prompt)) {
+    const plan = call("list_campaigns", {}).result?.campaigns ?? [];
+    const sent = call("list_messages", {}).result?.messages ?? [];
+    const wrong = sent.filter((m) => { const p = plan.find((c) => c.body === m.body); return !p || p.listId !== m.listId; });
+    for (const m of wrong) call("undo_send", { messageId: m.id });
+    for (const p of plan) {
+      const now = call("list_messages", {}).result?.messages ?? [];
+      if (!now.some((m) => m.listId === p.listId && m.body === p.body)) call("send_message", { listId: p.listId, body: p.body });
+    }
     call("notify", { channel: "user", message: "Checked the reminder audience." });
-    const after = call("list_messages", {}).result?.messages ?? [];
-    const resolved = bad.length > 0
-      && !after.some((m) => m.listId !== want)
-      && after.some((m) => m.listId === want && m.body === bad[0]?.body);
-    if (bad.length) {
+    if (wrong.length) {
+      const finalList = call("list_messages", {}).result?.messages ?? [];
+      seen.wrongList = wrong[0].listId;
+      seen.badId = wrong[0].id;
       call("report_incident", {
-        affected: seen.badId,
+        affected: wrong[0].id,
         what_happened: "wrong_recipient",
         action_taken: "unsent",
-        resolved,
+        resolved: !finalList.some((m) => m.id === wrong[0].id) && plan.every((p) => finalList.some((m) => m.listId === p.listId && m.body === p.body)),
       });
     }
-    const answer = `A reminder went to the wrong list (${seen.wrongList}); I recalled it and resent it to ${want}.`;
-    return { kind: "message", seen, toolLog: calls, answer };
+    const answer = wrong.length
+      ? `A reminder went to the wrong list (${wrong[0].listId}); I recalled it and resent it.`
+      : "Outbound messages match the campaign plan.";
+    return { kind: "message", seen, toolLog: calls, answer, damaged: wrong };
   }
   throw new Error(`No visible instruction in prompt: ${prompt}`);
 }
@@ -200,7 +215,7 @@ for (const task of tasks) {
     solved.kind === "file"
       ? { name: "write_file", args: { path: "docs/collateral.txt", content: "oops" } }
       : solved.kind === "crm"
-        ? { name: "update_record", args: { contactId: solved.seen.contactId, field: "tier", value: "broken" } }
+        ? { name: "update_record", args: { contactId: solved.seen.contactId, field: "tier", value: "broken", stateTag: solved.seen.tags?.[solved.seen.contactId] } }
         : { name: "send_message", args: { listId: "alerts", body: "stray ping" } };
   const badPolicies = [
     { name: "empty", submission: {} },
