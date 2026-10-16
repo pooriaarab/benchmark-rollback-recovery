@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { delimiter, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineBenchmark, type Task } from "benchmark-core";
+import { defineBenchmark, type JsonValue, type Task } from "benchmark-core";
 import { RollbackEnvironment, gradeRollback, rollbackMockPolicies } from "./rollback.js";
 
 export async function loadTasksFrom(tasksPath: string | URL): Promise<Task[]> {
@@ -37,6 +37,28 @@ export function resolveTasksPath(requested: string, options: { requireAllowList?
 }
 
 const DEFAULT_TASKS = new URL("../data/tasks.jsonl", import.meta.url);
+
+// Tasks served over the API or MCP must not leak answers. Holdout (`hid-`)
+// tasks keep only what an agent needs to act on — scenario, allowLists, and
+// initial state; answer-bearing fixtures (target, approved/pristine
+// snapshots, incident, tags) and generator bookkeeping stay server-side.
+// Grading is unaffected: score paths read the stored task, not the served one.
+export function sanitizeServedTask(task: Task): Task {
+  if (!task.id.startsWith("hid-")) return task;
+  const input = task.input && typeof task.input === "object" && !Array.isArray(task.input)
+    ? task.input as Record<string, JsonValue>
+    : {};
+  const kept: Record<string, JsonValue> = {};
+  for (const key of ["scenario", "allowLists", "initial"] as const) {
+    const value = input[key];
+    if (value !== undefined) kept[key] = value;
+  }
+  const { metadata, ...rest } = task;
+  const stripped = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? Object.fromEntries(Object.entries(metadata).filter(([key]) => !["seed", "split", "control", "labeled", "generatorIndex"].includes(key)))
+    : undefined;
+  return { ...rest, input: kept, ...(stripped ? { metadata: stripped } : {}) };
+}
 
 export function createRollbackBenchmark(tasksPath?: string) {
   return defineBenchmark({

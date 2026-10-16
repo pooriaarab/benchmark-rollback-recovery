@@ -2,7 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { MAX_TOOL_LOG_ENTRIES, mockAdapter, openaiCompatAdapter, openrouterAdapter, run, type Trace } from "benchmark-core";
-import { benchmark, createRollbackBenchmark, resolveTasksPath } from "./benchmark.js";
+import { benchmark, createRollbackBenchmark, resolveTasksPath, sanitizeServedTask } from "./benchmark.js";
 import { attachSubscores } from "./subscores.js";
 
 const tasksArg = { type: "string", description: "Alternate task JSONL path; must match an RRB_TASKS_ALLOW entry." } as const;
@@ -26,11 +26,11 @@ export function createMcpServer() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       const input = args(request.params.arguments);
-      if (request.params.name === "list_tasks") return content({ tasks: await benchFor(input).listTasks() });
+      if (request.params.name === "list_tasks") return content({ tasks: (await benchFor(input).listTasks()).map(sanitizeServedTask) });
       if (request.params.name === "get_task") {
         if (typeof input.taskId !== "string") return content({ error: "taskId is required." }, true);
         const task = await benchFor(input).getTask(input.taskId);
-        return task ? content({ task }) : content({ error: "Task not found." }, true);
+        return task ? content({ task: sanitizeServedTask(task) }) : content({ error: "Task not found." }, true);
       }
       if (request.params.name === "score_answer") {
         if (typeof input.taskId !== "string" || !input.submission || typeof input.submission !== "object" || Array.isArray(input.submission)) return content({ error: "taskId and submission are required." }, true);
