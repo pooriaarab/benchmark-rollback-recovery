@@ -6,7 +6,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { benchmark, RollbackEnvironment } from "../dist/index.js";
+import { mockAdapter } from "benchmark-core";
+import { benchmark, RollbackEnvironment, run as runBenchmark } from "../dist/index.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -231,16 +232,41 @@ for (const kind of ["crm", "file", "message"]) {
   );
 }
 
+// Run default, hidden, default, hidden inside one process; ids must switch
+// each time so the hidden split can never be graded against public tasks.
+const idRuns = [];
+for (const tasksFile of [undefined, "artifacts/hidden-check.jsonl", undefined, "artifacts/hidden-check.jsonl"]) {
+  const r = await runBenchmark(mockAdapter({ seed: 3, policies: benchmark.definition.mockPolicies }), tasksFile ? { tasks: tasksFile, seed: 3 } : { seed: 3 });
+  idRuns.push(r.rows.map((row) => row.taskId));
+}
+assert.ok(idRuns[0].every((id) => id.startsWith("rr-")), "first default run uses rr- ids");
+assert.ok(idRuns[1].every((id) => id.startsWith("hid-")), "first hidden run uses hid- ids");
+assert.ok(idRuns[2].every((id) => id.startsWith("rr-")), "second default run uses rr- ids");
+assert.ok(idRuns[3].every((id) => id.startsWith("hid-")), "second hidden run uses hid- ids");
+
+const hidCli = await execFile(process.execPath, ["dist/cli.js", "run", "--model", "offline", "--provider", "mock", "--json", "--tasks", "artifacts/hidden-check.jsonl"], { maxBuffer: 5_000_000 });
+const hidReport = JSON.parse(hidCli.stdout);
+assert.equal(hidReport.rows.length, 36);
+assert.ok(hidReport.rows.every((row) => row.taskId.startsWith("hid-")), "cli run --tasks uses hid- ids");
+assert.ok(hidReport.subscores && Number.isInteger(hidReport.subscores.disclosed), "hidden run keeps subscores");
+await writeFile("artifacts/hidden-report.json", JSON.stringify(hidReport));
+const rescore = await execFile(process.execPath, ["dist/cli.js", "score", "artifacts/hidden-report.json", "--tasks", "artifacts/hidden-check.jsonl", "--json"], { maxBuffer: 5_000_000 });
+assert.equal(JSON.parse(rescore.stdout).rows.length, 36, "score --tasks re-grades hidden rows");
+
 const pack = JSON.parse((await execFile("npm", ["pack", "--dry-run", "--json"])).stdout);
 const packed = pack[0].files.map((f) => f.path);
 assert.ok(packed.includes("data/tasks.jsonl") && packed.includes("data/PROVENANCE.md"), "package ships public task data");
 assert.ok(!packed.some((path) => path.startsWith("data/hidden")), "package must not ship the hidden split");
 
-const probe = createNetServer();
-await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-const address = probe.address(); assert.ok(address && typeof address === "object");
-await new Promise((resolve) => probe.close(resolve));
-const port = address.port;
+async function freePort() {
+  const probe = createNetServer();
+  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address(); assert.ok(address && typeof address === "object");
+  await new Promise((resolve) => probe.close(resolve));
+  return address.port;
+}
+
+const port = await freePort();
 const server = spawn(process.execPath, ["dist/cli.js", "serve", String(port)], { stdio: ["ignore", "pipe", "pipe"] });
 const base = `http://127.0.0.1:${port}`; const routes = {};
 async function get(path) {
@@ -258,6 +284,14 @@ try {
   assert.equal((await get("/v1/index-entry")).value.task_count, 36);
 } finally { if (server.exitCode === null) { server.kill("SIGTERM"); await once(server, "exit"); } }
 
+const hidPort = await freePort();
+const hidServer = spawn(process.execPath, ["dist/cli.js", "serve", String(hidPort)], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RRB_TASKS_FILE: "artifacts/hidden-check.jsonl" } });
+try {
+  for (let attempt = 0; attempt < 100; attempt++) { try { const r = await fetch(`http://127.0.0.1:${hidPort}/health`); if (r.ok) break; } catch { await new Promise((resolve) => setTimeout(resolve, 20)); } }
+  const listed = await fetch(`http://127.0.0.1:${hidPort}/v1/tasks`).then((r) => r.json());
+  assert.ok(listed.tasks.every((t) => t.id.startsWith("hid-")), "API RRB_TASKS_FILE serves the hidden split");
+} finally { if (hidServer.exitCode === null) { hidServer.kill("SIGTERM"); await once(hidServer, "exit"); } }
+
 const transport = new StdioClientTransport({ command: process.execPath, args: ["dist/cli.js", "mcp"], cwd: process.cwd(), stderr: "pipe" });
 const client = new Client({ name: "benchmark-rollback-recovery-e2e", version: "0.1.0" });
 await client.connect(transport); let toolNames;
@@ -267,12 +301,19 @@ try {
   const calls = [
     ["list_tasks", {}], ["get_task", { taskId: "rr-crm-01" }],
     ["score_answer", { taskId: "rr-crm-01", submission: goodRow.submission }],
-    ["get_provenance", {}], ["run_benchmark", { model: "offline" }],
+    ["get_provenance", {}],
   ];
   for (const [name, args] of calls) {
     const result = await client.callTool({ name, arguments: args });
-    if (name === "run_benchmark") assert.equal(result.isError, true); else assert.notEqual(result.isError, true);
+    assert.notEqual(result.isError, true, `${name} failed`);
   }
+  const hidTasks = await client.callTool({ name: "list_tasks", arguments: { tasks: "artifacts/hidden-check.jsonl" } });
+  assert.notEqual(hidTasks.isError, true);
+  assert.ok(JSON.parse(hidTasks.content[0].text).tasks.every((t) => t.id.startsWith("hid-")), "MCP list_tasks honours the tasks option");
+  const runResult = await client.callTool({ name: "run_benchmark", arguments: { model: "offline", provider: "mock" } });
+  assert.notEqual(runResult.isError, true, "run_benchmark with the mock provider succeeds");
+  const runReport = JSON.parse(runResult.content[0].text);
+  assert.ok(runReport.subscores && Number.isInteger(runReport.subscores.disclosed), "run_benchmark report carries subscores");
 } finally { await client.close(); }
 
 const artifact = { task_count: report.rows.length, scores: report.rows.map((row) => row.score), subscores, visible_policy_solved: solvedByKind, route_status_codes: routes, tool_names: toolNames };
