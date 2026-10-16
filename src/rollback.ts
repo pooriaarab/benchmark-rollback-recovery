@@ -74,7 +74,7 @@ export class RollbackEnvironment implements Environment {
     if (name === "correct_record") {
       const id = String(args.contactId ?? ""), field = String(args.field ?? "");
       const pristine = this.#pristine.crm[id];
-      if (!this.#state.crm[id] || !pristine || pristine[field as keyof CrmRecord] === undefined) return { result: null, error: { code: "NO_SNAPSHOT", message: "No snapshot." } };
+      if (!this.#state.crm[id] || !pristine || !crmFields.includes(field) || pristine[field as keyof CrmRecord] === undefined) return { result: null, error: { code: "NO_SNAPSHOT", message: "No snapshot." } };
       this.#state.crm[id] = { ...this.#state.crm[id], [field]: pristine[field as keyof CrmRecord] };
       return { result: { corrected: true } };
     }
