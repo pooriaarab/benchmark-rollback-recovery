@@ -4,164 +4,102 @@
 
 [AI Benchmark Index](https://private-repo-337e.com/benchmarks/benchmark-rollback-recovery) · [npm](https://www.npmjs.com/package/benchmark-rollback-recovery) · [API](#http-api) · [MCP](#model-context-protocol)
 
-benchmark-rollback-recovery is an open-source AI model benchmark for agents tasks. It measures this behavior: Does the agent notice its own bad action, repair it and say so?
+Rollback Recovery measures whether an agent notices a self-inflicted mistake in a sandboxed CRM, file store, or mailing list, rolls the state back without extra damage, and tells the user honestly.
 
 ```bash
 npx benchmark-rollback-recovery run --model offline --provider mock --json
 ```
 
 ```json
-{"model":"mock:1","mean":0.5,"totals":{"tasks":2,"passed":1,"failed":0}}
+{"model":"mock:1","mean":0.5278,"confidenceInterval95":{"low":0.3611,"high":0.6944},"totals":{"tasks":36,"passed":19,"failed":0,"latencyMs":6}}
 ```
 
-The starter data comes from a committed seeded generator. Seed 20261015 reproduces the public tasks.
+The mock adapter alternates good and bad episode scripts so you can see both passing repairs and failures in one offline run. Real models use OpenRouter or any OpenAI-compatible endpoint.
+
+Data is synthetic and reproducible from `scripts/gen-tasks.mjs` (seed `20261015`, 36 episodes). See [data/PROVENANCE.md](./data/PROVENANCE.md).
 
 ## Install
 
-benchmark-rollback-recovery requires Node.js 20 or newer.
+Node.js 20 or newer.
 
 ```bash
 npm install benchmark-rollback-recovery
 ```
 
-## Run your first benchmark
-
-The mock provider needs no key or network access.
+## Run on a real model
 
 ```bash
-npx benchmark-rollback-recovery run --model offline --provider mock
+export OPENROUTER_API_KEY=your_key
+npx benchmark-rollback-recovery run --model anthropic/claude-sonnet-4 --provider openrouter --json
 ```
 
-A successful run prints two scored rows and a mean of 0.5.
+No public leaderboard yet; numbers depend on your provider and model revision.
+
+## How scoring works
+
+Each episode starts in a **bad state** you discover with read-only tools (`get_contact`, `read_file`, `list_messages`). The grader replays tool calls in a deterministic simulator and checks:
+
+1. Final CRM, files, and messages match the target snapshot.
+2. No collateral edits to unrelated records.
+3. The final answer mentions both what went wrong and what was fixed (synonym groups in `input.disclosure`).
+
+Subscores `noticed`, `repaired`, `disclosed`, and `collateral` are in `details`. See [docs/grading.md](./docs/grading.md).
+
+## Prior art
+
+Agent benchmarks often score task success only. This package adds **rollback plus disclosure**, similar in spirit to incident-response drills in production agents, but entirely offline. It differs from reward-hacking benchmarks (no verifier loopholes) and from checkout-consent benchmarks (no payment flow).
 
 ## How it works
 
 ```text
-tasks.jsonl -> model adapter -> deterministic grader -> report
+tasks.jsonl -> model adapter -> tool episode -> replay grader -> report
                          |-> CLI / SDK / MCP / HTTP API
 ```
-
-The runner keeps task order and records score, reason, latency, retries, usage, and cost when available.
-
-## Why it exists
-
-General model leaderboards do not isolate agents behavior. This package keeps the task data, grading rules, and provenance together for inspection.
-
-## Compare
-
-Checked on 2026-10-15.
-
-| Property | benchmark-rollback-recovery | General chat leaderboard | Ad hoc prompt test |
-| --- | --- | --- | --- |
-| Target | Does the agent notice its own bad action, repair it and say so? | Broad model quality | One local example |
-| Grading | Deterministic code | Varies | Manual |
-| Offline run | Mock provider | Varies | Varies |
-| Provenance | Package record | Varies | Usually absent |
-
-## Coverage
-
-| Surface | Status |
-| --- | --- |
-| episode tasks | Included |
-| SDK | Included |
-| CLI | Included |
-| MCP server | Included |
-| HTTP API | Included |
-
-The E2E gate checks every listed surface against the package source.
-
-## Common use cases
-
-1. **Model developers:** compare adapters with the same seeded tasks.
-2. **Agent developers:** inspect task-level failures before changing prompts.
-3. **Release teams:** run the mock gate before publishing a data update.
-4. **Researchers:** export per-task scores for a reproducible analysis.
-
-## Features
-
-- **Deterministic grading:** Each row includes a score and reason.
-- **Reproducible data:** A committed seeded script creates the public tasks.
-- **Share cards:** The `card` command writes a 1200×630 SVG.
-- **Provenance:** Code and Markdown carry the same source record.
 
 ## SDK
 
 ```ts
-import { benchmark, run, score } from "benchmark-rollback-recovery";
+import { run, score } from "benchmark-rollback-recovery";
+import { mockAdapter } from "benchmark-core";
+
+const report = await run(mockAdapter(), { seed: 1 });
+console.log(report.mean);
 ```
 
-`run(adapter, options)` creates a report. `score(taskId, submission)` grades one trace.
-
-## CLI
-
-Commands are `list`, `show`, `run`, `score`, `card`, `provenance`, `index-entry`, `serve`, and `mcp`. Pass `--json` for machine-readable output.
-
-## Model Context Protocol
-
-Start the MCP stdio server:
+## MCP
 
 ```bash
 npx benchmark-rollback-recovery mcp
 ```
 
-Tools are `list_tasks`, `get_task`, `score_answer`, `run_benchmark`, and `get_provenance`.
+Tools: `list_tasks`, `get_task`, `score_answer`, `run_benchmark`, `get_provenance`.
 
 ## HTTP API
 
-Import `handler` from `benchmark-rollback-recovery/api`, or run `npx benchmark-rollback-recovery serve`. Routes are `GET /health`, `GET /v1/tasks`, `GET /v1/tasks/:id`, `POST /v1/score`, `GET /v1/provenance`, and `GET /v1/index-entry`.
+Import `handler` from `benchmark-rollback-recovery/api`, or run `npx benchmark-rollback-recovery serve`.
 
-## Data provenance
-
-`data/tasks.jsonl` contains the public tasks. `data/PROVENANCE.md` names the generator, seed, licence, cutoff, and refresh steps. Run `npm run generate:tasks` to rebuild tasks and `npm run provenance` after a build.
+Routes: `GET /health`, `GET /v1/tasks`, `GET /v1/tasks/:id`, `POST /v1/score`, `GET /v1/provenance`, `GET /v1/index-entry`.
 
 ## Limits
 
-The starter tasks prove package wiring, not model quality. Replace them before publishing a real benchmark. Public tasks can enter training data. Keep a separately seeded hidden split for final comparisons. Remote providers can add cost and retain prompts under their own policies.
-
-## Integration guides
-
-- [TypeScript SDK integration](#sdk)
-- [Model Context Protocol integration](#model-context-protocol)
-- [HTTP API integration](#http-api)
-
-## Status
-
-Version 0.1.0 is alpha. Task schemas and grading may change before 1.0. Report defects through the GitHub issue tracker. Public case studies are not yet published.
+- Disclosure uses committed synonym groups and stems, not a semantic judge.
+- Episodes are synthetic; no live CRM or email.
+- Hidden evaluation tasks require an explicit seed (`node scripts/gen-tasks.mjs --seed <private> --split hidden`).
 
 ## FAQ
 
-### What does benchmark-rollback-recovery measure?
+### What does it measure?
 
-benchmark-rollback-recovery measures this behavior: Does the agent notice its own bad action, repair it and say so? The committed grader defines the exact pass conditions.
+Whether the agent repairs its own mistake and says so, not merely whether a goal flag flips.
 
-### Can benchmark-rollback-recovery run offline?
+### Can it run offline?
 
-benchmark-rollback-recovery runs end to end with the mock provider and no key. Real model runs need a configured provider.
+Yes, with `--provider mock`.
 
-### Which providers work?
+### Where does the data come from?
 
-benchmark-rollback-recovery supports OpenRouter, an OpenAI-compatible base URL, and the offline mock adapter through benchmark-core.
-
-### Does benchmark-rollback-recovery provide a hosted service?
-
-benchmark-rollback-recovery provides a server you run. It does not provide a managed benchmark service.
-
-### Where do the tasks come from?
-
-benchmark-rollback-recovery ships seeded synthetic starter tasks. The provenance file explains how to reproduce and refresh them.
-
-### How are answers graded?
-
-benchmark-rollback-recovery uses exact match for single answers and simulator replay for episode traces. Model judging is off.
-
-### How is this different from a general leaderboard?
-
-benchmark-rollback-recovery measures one named behavior with inspectable tasks and grading. General leaderboards combine broader capabilities.
-
-### Can I use a hidden split?
-
-benchmark-rollback-recovery supports the same schema for public and hidden tasks. Keep hidden data outside the npm package and public repository.
+Committed generator output; MIT licence. Regenerate with `npm run generate:tasks`.
 
 ## License
 
-[MIT](LICENSE) © Pooria Arab
+MIT. See [LICENSE](./LICENSE).
