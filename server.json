@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.pooriaarab/benchmark-rollback-recovery",
+  "description": "Does the agent notice its own bad action, repair it and say so?",
+  "version": "0.1.0",
+  "repository": { "url": "https://github.com/pooriaarab/benchmark-rollback-recovery", "source": "github" },
+  "packages": [{
+    "registryType": "npm", "registryBaseUrl": "https://registry.npmjs.org", "identifier": "benchmark-rollback-recovery", "version": "0.1.0",
+    "transport": { "type": "stdio" }, "runtimeHint": "npx",
+    "packageArguments": [{ "type": "positional", "valueHint": "subcommand", "value": "mcp" }]
+  }]
+}
