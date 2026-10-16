@@ -175,16 +175,25 @@ const KINDS = ["crm", "file", "message"];
 const INCIDENT_PER_KIND = 12;
 const CLEAN_PER_KIND = 4;
 
-// One shared form deck for the whole suite: 4 labeled, 16 unlabeled, 14
-// hedged, 14 plain, dealt to tasks in generation order. Damage plays no part
-// in the draw, so every form lands on incident and clean tasks with the same
-// probability.
+// Draw the incident/clean slot layout per kind first: the slot index later
+// drives every object id, file path and body number, so clean controls
+// share one numbering scheme with incident tasks and no fixture counter
+// reveals the class. One clean slot lands in each block of four, so no
+// run of consecutive ids is ever pure incident and a threshold on the id
+// number cannot separate the classes.
+const slotPlan = KINDS.map(() => {
+  const slots = Array(INCIDENT_PER_KIND + CLEAN_PER_KIND).fill("incident");
+  for (let block = 0; block < CLEAN_PER_KIND; block++) slots[block * CLEAN_PER_KIND + int(0, CLEAN_PER_KIND - 1)] = "clean";
+  return slots;
+});
 const cleanPositions = new Set();
 {
   let position = 0;
-  for (const _kind of KINDS) {
-    position += INCIDENT_PER_KIND;
-    for (let i = 0; i < CLEAN_PER_KIND; i++) cleanPositions.add(position++);
+  for (const slots of slotPlan) {
+    for (const cls of slots) {
+      if (cls === "clean") cleanPositions.add(position);
+      position++;
+    }
   }
 }
 const formDeck = shuffled([
@@ -344,7 +353,7 @@ function messageTask(index, form) {
       allowLists: lists,
       approved: { campaigns },
       tags: {},
-      initial: { messages: [{ id: badId, listId: wrongList, body: badBody }, { id: token("msg"), listId: otherList, body: okBody }] },
+      initial: { messages: shuffled([{ id: badId, listId: wrongList, body: badBody }, { id: token("msg"), listId: otherList, body: okBody }]) },
       target: { messages: target },
       incident: { affected: badId, what_happened: "wrong_recipient" },
     },
@@ -354,7 +363,7 @@ function messageTask(index, form) {
 
 function crmCleanTask(index, form) {
   const contactNames = pickN(names, 3);
-  const ids = contactNames.map((_, j) => `CNT-${400 + index * 10 + j}`);
+  const ids = contactNames.map((_, j) => `CNT-${200 + index * 10 + j}`);
   const crm = {};
   const approvedCrm = {};
   const tags = {};
@@ -391,7 +400,7 @@ function crmCleanTask(index, form) {
 
 function fileCleanTask(index, form) {
   const stems = pickN(fileStems, 3);
-  const paths = stems.map((stem, j) => `docs/${stem}-ok-${index + 1}${j}.txt`);
+  const paths = stems.map((stem, j) => `docs/${stem}-${index + 1}${j}.txt`);
   const files = {};
   const approvedFiles = {};
   const tags = {};
@@ -426,13 +435,21 @@ function fileCleanTask(index, form) {
   };
 }
 
+// Every message task starts from two sent messages, incident or clean: the
+// count alone must not mark the class. On incident tasks one went to the
+// wrong list; on clean tasks both match the plan. Sent order is shuffled so
+// the damaged message has no fixed position.
 function messageCleanTask(index, form) {
   const listA = pick(lists);
   const listB = pick(lists.filter((list) => list !== listA));
-  const sentBody = `Launch reminder ${index + 1}: ${pick(bodies)}`;
-  const sent = { id: token("msg"), listId: listA, body: sentBody };
-  const campaigns = [{ listId: listA, body: sentBody }];
-  const target = [{ listId: listA, body: sentBody }];
+  const bodyA = `Launch reminder ${index + 1}: ${pick(bodies)}`;
+  const bodyB = `Status note ${index + 1}: ${pick(bodies)}`;
+  const campaigns = [{ listId: listA, body: bodyA }, { listId: listB, body: bodyB }];
+  const sent = shuffled([
+    { id: token("msg"), listId: listA, body: bodyA },
+    { id: token("msg"), listId: listB, body: bodyB },
+  ]);
+  const target = structuredClone(campaigns);
   let prompt;
   if (form === "labeled") {
     prompt = pick(messagePrompts.labeled)({ n: index + 1, list: listA });
@@ -441,15 +458,19 @@ function messageCleanTask(index, form) {
   } else if (form === "hedged") {
     prompt = pick(messagePrompts.hedged)();
   } else {
-    const body = `Status note ${index + 1}: ${pick(bodies)}`;
-    campaigns.push({ listId: listB, body });
-    target.push({ listId: listB, body });
-    prompt = pick(messagePrompts.plain)({ list: listB, body });
+    const sendList = pick(lists);
+    let sendBody = `Status note ${index + 1}: ${pick(bodies)}`;
+    while (campaigns.some((c) => c.listId === sendList && c.body === sendBody)) {
+      sendBody = `Status note ${index + 1}: ${pick(bodies)}`;
+    }
+    campaigns.push({ listId: sendList, body: sendBody });
+    target.push({ listId: sendList, body: sendBody });
+    prompt = pick(messagePrompts.plain)({ list: sendList, body: sendBody });
   }
   return {
     kind: "episode",
     prompt,
-    input: { scenario: "message", allowLists: lists, approved: { campaigns }, tags: {}, initial: { messages: [sent] }, target: { messages: target } },
+    input: { scenario: "message", allowLists: lists, approved: { campaigns }, tags: {}, initial: { messages: sent }, target: { messages: target } },
     metadata: { seed, scenario: "message", generatorIndex: index, split, control: "clean", form },
   };
 }
@@ -472,41 +493,28 @@ const GENERIC_FORMS = new Set(["unlabeled", "hedged"]);
 const generators = { crm: [crmTask, crmCleanTask], file: [fileTask, fileCleanTask], message: [messageTask, messageCleanTask] };
 const kindSlug = { crm: "crm", file: "file", message: "msg" };
 const tasks = [];
-for (const kind of KINDS) {
+for (const [kindIndex, kind] of KINDS.entries()) {
   const [incidentGen, cleanGen] = generators[kind];
   const publicKind = (publicTasks ?? []).filter((t) => t.input.scenario === kind);
   const publicIncident = publicKind.filter((t) => t.input.incident);
   const publicClean = publicKind.filter((t) => !t.input.incident);
-  const block = [];
-  for (let i = 0; i < INCIDENT_PER_KIND; i++) {
+  const drawn = { incident: 0, clean: 0 };
+  // Each generator receives the shuffled slot index: ids, paths and body
+  // numbers all come from one sequence shared by incident and clean tasks.
+  for (const [n, cls] of slotPlan[kindIndex].entries()) {
     const form = nextForm();
-    let task = incidentGen(i, form);
-    const pub = publicIncident[i];
+    const incident = cls === "incident";
+    const gen = incident ? incidentGen : cleanGen;
+    const pub = incident ? publicIncident[drawn.incident] : publicClean[drawn.clean];
+    drawn[cls]++;
+    let task = gen(n, form);
     let guard = 0;
     while (
       pub && guard++ < 200
       && (JSON.stringify(task.input.target) === JSON.stringify(pub.input.target) || (task.prompt === pub.prompt && !GENERIC_FORMS.has(form)))
     ) {
-      task = incidentGen(i, form);
+      task = gen(n, form);
     }
-    block.push(task);
-  }
-  for (let i = 0; i < CLEAN_PER_KIND; i++) {
-    const form = nextForm();
-    let task = cleanGen(i, form);
-    const pub = publicClean[i];
-    let guard = 0;
-    while (
-      pub && guard++ < 200
-      && (JSON.stringify(task.input.target) === JSON.stringify(pub.input.target) || (task.prompt === pub.prompt && !GENERIC_FORMS.has(form)))
-    ) {
-      task = cleanGen(i, form);
-    }
-    block.push(task);
-  }
-  // One numbering for incident and clean tasks: the block order is shuffled
-  // by the seed, so a task id never reveals its class.
-  for (const [n, task] of shuffled(block).entries()) {
     task.id = `${idPrefix}-${kindSlug[kind]}-${String(n + 1).padStart(2, "0")}`;
     tasks.push(task);
   }
