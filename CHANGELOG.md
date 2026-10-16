@@ -6,6 +6,15 @@ published yet; `0.1.0` collects everything before the first release.
 
 ## [Unreleased]
 
+### Changed
+
+- Prompt forms are independent of damage: incident and clean tasks draw from
+  the same four prompt forms (labeled, "rewrote" discovery, hedged, plain
+  work request) with the same probabilities, so the template alone cannot
+  reveal whether anything is wrong. The E2E bounds a prompt-template
+  classifier at 0.35 on the public split and on two hidden seeds. Task
+  metadata records the drawn `form` instead of `labeled`.
+
 ## [0.1.0] - 2026-10-16
 
 ### Added

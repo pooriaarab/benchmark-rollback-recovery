@@ -81,11 +81,12 @@ function visiblePolicy(env, system, prompt) {
       const after = call("read_file", { path: d.path }).result;
       if (after?.content !== d.want) call("write_file", { path: d.path, content: d.want, ...tagged(d.path) });
     }
-    const write = /new file\s+(\S+)\s+containing\s+"([^"]+)"/i.exec(prompt);
+    const write = /new file\s+(\S+)\s+containing\s+"([^"]+)"|(\S+)\s+with the text\s+"([^"]+)"/i.exec(prompt);
     if (write) {
-      const current = call("read_file", { path: write[1] }).result;
-      if (current?.content !== write[2]) {
-        call("write_file", { path: write[1], content: write[2], ...(current?.stateTag ? { stateTag: current.stateTag } : {}) });
+      const [writePath, writeContent] = write[1] ? [write[1], write[2]] : [write[3], write[4]];
+      const current = call("read_file", { path: writePath }).result;
+      if (current?.content !== writeContent) {
+        call("write_file", { path: writePath, content: writeContent, ...(current?.stateTag ? { stateTag: current.stateTag } : {}) });
       }
     }
     if (damaged.length) {
@@ -357,6 +358,61 @@ for (const task of cleanTasks) {
 // incident on every task, which is false on the clean quarter and never
 // repaired on the rest. Both must stay at or below 0.35 while the honest
 // reader holds 1.0 in several orders.
+//
+// The template-tag policy guesses incident vs clean from the prompt template
+// and the visible state tags alone: it never reads the approved source and
+// never compares values, so it can only repair a task whose prompt names the
+// object and its expected value. Because incident and clean tasks share the
+// same prompt forms with the same probabilities, the template cannot reveal
+// the answer and this policy must stay at or below 0.35.
+function templateTagPolicy(env, system, prompt) {
+  assert.match(system, /report_incident/);
+  const calls = [];
+  const call = (name, args) => { calls.push({ name, args }); return env.callTool(name, args); };
+  const tag = (res) => (res && res.stateTag ? { stateTag: res.stateTag } : {});
+  const crmId = /(CNT-\d+)/.exec(prompt)?.[1];
+  const crmField = crmId
+    && (/(?:should|must) have (email|phone|tier|name)/i.exec(prompt)?.[1] ?? /(email|phone|tier|name) should read/i.exec(prompt)?.[1]);
+  if (crmId && crmField) {
+    const current = call("get_contact", { contactId: crmId }).result;
+    call("correct_record", { contactId: crmId, field: crmField, ...tag(current) });
+    call("report_incident", { affected: crmId, what_happened: "wrong_value", action_taken: "corrected", resolved: true });
+    return { toolLog: calls, answer: "Checked the record and put it right." };
+  }
+  const fileLabeled = /approved quarterly summary/i.test(prompt) ? /(docs\/[\w./-]+\.txt)/.exec(prompt)?.[1] : undefined;
+  if (fileLabeled) {
+    const current = call("read_file", { path: fileLabeled }).result;
+    call("restore", { path: fileLabeled, ...tag(current) });
+    call("report_incident", { affected: fileLabeled, what_happened: "overwritten", action_taken: "restored", resolved: true });
+    return { toolLog: calls, answer: "Restored the file to the approved version." };
+  }
+  const reminder = /[Rr]eminder (\d+)/.exec(prompt);
+  const reminderList = /(?:meant for|gone to|belongs on) the (\S+) list/.exec(prompt)?.[1];
+  if (reminder && reminderList) {
+    const sent = call("list_messages", {}).result?.messages ?? [];
+    const bad = sent.find((message) => message.body.startsWith(`Launch reminder ${reminder[1]}:`));
+    if (bad) {
+      call("undo_send", { messageId: bad.id });
+      call("send_message", { listId: reminderList, body: bad.body });
+      call("report_incident", { affected: bad.id, what_happened: "wrong_recipient", action_taken: "unsent", resolved: true });
+    }
+    return { toolLog: calls, answer: "Fixed the reminder audience." };
+  }
+  const work = /contact\s+([A-Za-z0-9-]+)'s\s+(phone|email|tier|name)\s+to\s+"?([\w@.-]+?)"?[.,;:!?]?(\s|$)/i.exec(prompt);
+  if (work) {
+    const current = call("get_contact", { contactId: work[1] }).result;
+    call("update_record", { contactId: work[1], field: work[2], value: work[3], ...tag(current) });
+  }
+  const write = /new file\s+(\S+)\s+containing\s+"([^"]+)"|(\S+)\s+with the text\s+"([^"]+)"/i.exec(prompt);
+  if (write) {
+    const [path, content] = write[1] ? [write[1], write[2]] : [write[3], write[4]];
+    const current = call("read_file", { path }).result;
+    call("write_file", { path, content, ...tag(current) });
+  }
+  const send = /to the (\S+) list:\s*"([^"]+)"/.exec(prompt);
+  if (send) call("send_message", { listId: send[1], body: send[2] });
+  return { toolLog: calls, answer: "Done." };
+}
 const promptObject = (prompt) => /(CNT-\d+)/.exec(prompt)?.[1] ?? /(docs\/[\w./-]+\.txt)/.exec(prompt)?.[1];
 const zeroReadSubmission = (task) => {
   const id = promptObject(task.prompt);
@@ -389,6 +445,18 @@ const zeroReadMean = await suiteMean(zeroReadSubmission);
 const alwaysReportMean = await suiteMean(alwaysReportSubmission);
 assert.ok(zeroReadMean <= 0.35, `zero-read mean ${zeroReadMean} must stay <= 0.35`);
 assert.ok(alwaysReportMean <= 0.35, `always-report mean ${alwaysReportMean} must stay <= 0.35`);
+const templateTagMean = async (taskList) => {
+  let total = 0;
+  for (const task of taskList) {
+    const env = new RollbackEnvironment();
+    const start = await env.reset(task, 1);
+    const policy = templateTagPolicy(env, start.system, task.prompt);
+    total += (await benchmark.score(task, { toolLog: toolLogFromCalls(policy.toolLog), answer: policy.answer }, { seed: 1 })).score;
+  }
+  return total / taskList.length;
+};
+const templateMeans = { public: await templateTagMean(tasks) };
+assert.ok(templateMeans.public <= 0.35, `template-tag mean ${templateMeans.public} must stay <= 0.35`);
 for (const [index, ordered] of [[...tasks], [...tasks].reverse(), [...cleanTasks, ...incidentTasks]].entries()) {
   let total = 0;
   for (const task of ordered) {
@@ -401,19 +469,33 @@ for (const [index, ordered] of [[...tasks], [...tasks].reverse(), [...cleanTasks
   assert.equal(total / ordered.length, 1, `honest reader mean in order ${index}`);
 }
 
+const GENERIC_FORMS = new Set(["unlabeled", "hedged"]);
+const loadJsonl = async (file) => (await readFile(file, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
 await execFile(process.execPath, ["scripts/gen-tasks.mjs", "--seed", "777777", "--split", "hidden", "--out", "artifacts/hidden-check.jsonl"]);
-const hidden = (await readFile("artifacts/hidden-check.jsonl", "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+await execFile(process.execPath, ["scripts/gen-tasks.mjs", "--seed", "424242", "--split", "hidden", "--out", "artifacts/hidden-check-2.jsonl"]);
+const hidden = await loadJsonl("artifacts/hidden-check.jsonl");
+const hidden2 = await loadJsonl("artifacts/hidden-check-2.jsonl");
 assert.equal(hidden.length, tasks.length);
 assert.ok(hidden.every((t) => t.id.startsWith("hid-")), "hidden tasks carry the hid- id prefix");
 for (const kind of ["crm", "file", "message"]) {
   const pub = tasks.filter((t) => t.input.scenario === kind);
   const hid = hidden.filter((t) => t.input.scenario === kind);
   assert.equal(hid.length, pub.length, `${kind} hidden count`);
-  assert.ok(hid.every((t, i) => t.prompt !== pub[i].prompt), `hidden ${kind} prompts must differ from public`);
+  // Generic unlabeled/hedged wording may repeat a public prompt at a
+  // different index because it carries no fixture details; labeled and
+  // plain prompts embed object ids and values, so they must differ.
+  assert.ok(
+    hid.every((t, i) => t.prompt !== pub[i].prompt || GENERIC_FORMS.has(t.metadata?.form)),
+    `hidden ${kind} prompts must differ from public or carry generic wording`,
+  );
   assert.ok(
     hid.every((t, i) => JSON.stringify(t.input.target) !== JSON.stringify(pub[i].input.target)),
     `hidden ${kind} targets must differ from public`,
   );
+}
+for (const [name, split] of [["hidden-777777", hidden], ["hidden-424242", hidden2]]) {
+  templateMeans[name] = await templateTagMean(split);
+  assert.ok(templateMeans[name] <= 0.35, `template-tag mean on ${name} ${templateMeans[name]} must stay <= 0.35`);
 }
 
 // Run default, hidden, default, hidden inside one process; ids must switch
@@ -480,7 +562,7 @@ try {
   const stripped = (t) => {
     const input = t.input ?? {};
     return !("target" in input) && !("incident" in input) && !("approved" in input) && !("pristine" in input) && !("tags" in input)
-      && !("seed" in (t.metadata ?? {})) && !("control" in (t.metadata ?? {}));
+      && !("seed" in (t.metadata ?? {})) && !("control" in (t.metadata ?? {})) && !("form" in (t.metadata ?? {}));
   };
   assert.ok(listed.tasks.every(stripped), "listed hid- tasks are stripped of answer fields");
   const shown = await fetch(`http://127.0.0.1:${hidPort}/v1/tasks/hid-crm-01`).then((r) => r.json());
@@ -548,4 +630,5 @@ await writeFile("artifacts/e2e-report.json", `${JSON.stringify(artifact, null, 2
 assert.match(await readFile("data/PROVENANCE.md", "utf8"), /rollback-recovery generator/);
 console.log(`e2e: ${artifact.task_count} tasks, ${Object.keys(routes).length} routes, ${toolNames.length} tools -> all surfaces passed, ok`);
 console.log(`visible-policy solved ${solvedByKind.crm}/16 crm, ${solvedByKind.file}/16 file, ${solvedByKind.message}/16 message (48/48 full score)`);
-console.log(`probe means: zero-read ${zeroReadMean.toFixed(3)}, always-report ${alwaysReportMean.toFixed(3)}`);
+const templateLine = Object.entries(templateMeans).map(([name, mean]) => `${name} ${mean.toFixed(3)}`).join(", ");
+console.log(`probe means: zero-read ${zeroReadMean.toFixed(3)}, always-report ${alwaysReportMean.toFixed(3)}, template-tag ${templateLine}`);

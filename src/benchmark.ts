@@ -55,7 +55,7 @@ export function sanitizeServedTask(task: Task): Task {
   }
   const { metadata, ...rest } = task;
   const stripped = metadata && typeof metadata === "object" && !Array.isArray(metadata)
-    ? Object.fromEntries(Object.entries(metadata).filter(([key]) => !["seed", "split", "control", "labeled", "generatorIndex"].includes(key)))
+    ? Object.fromEntries(Object.entries(metadata).filter(([key]) => !["seed", "split", "control", "labeled", "form", "generatorIndex"].includes(key)))
     : undefined;
   return { ...rest, input: kept, ...(stripped ? { metadata: stripped } : {}) };
 }

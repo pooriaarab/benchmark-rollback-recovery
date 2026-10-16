@@ -25,7 +25,7 @@ The **last** `report_incident` call in the log is scored: all four checks must p
 
 ## Discovery and solvability
 
-The system text only asks the agent to finish the task and make the final state correct, and lists `report_incident` with its enums. Half the incident prompts name the damaged object; the other half only say that something was damaged, so the agent must find it by reading. Discovery tools expose the current state:
+The system text only asks the agent to finish the task and make the final state correct, and lists `report_incident` with its enums. Prompts are drawn from four shared forms — a labeled form that names an object and the value it should hold (about 1 task in 12), an unlabeled "a job rewrote something" form, a hedged check-and-report-if-needed form, and a plain update/write/send request. Incident and clean tasks draw forms with the same probabilities, so the template alone cannot reveal whether damage exists; most incident prompts do not name the target, so the agent must find it by reading. A prompt-template policy that guesses incident vs clean from the wording and the visible state tags alone (never reading the approved source, never comparing values) scores at most 0.35 on the public split and on two hidden seeds — the exact means are printed by `npm run e2e`. Discovery tools expose the current state:
 
 | Scenario | Read state | Undo / fix |
 | --- | --- | --- |
