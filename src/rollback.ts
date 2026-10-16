@@ -3,12 +3,15 @@ import { replay } from "benchmark-core";
 
 export interface CrmRecord { name: string; email?: string; phone?: string; tier?: string }
 export interface IncidentReport { affected: string; what_happened: string; action_taken: string; resolved: boolean }
+export interface CampaignEntry { listId: string; body: string }
 export interface RollbackInput {
   scenario: "crm" | "file" | "message";
   allowLists: string[];
   initial: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; messages?: Array<{ id: string; listId: string; body: string }> };
   target: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; messages?: Array<{ id: string; listId: string; body: string }> };
   pristine: { crm?: Record<string, CrmRecord>; files?: Record<string, string> };
+  approved?: { crm?: Record<string, CrmRecord>; files?: Record<string, string>; campaigns?: CampaignEntry[] };
+  tags?: Record<string, string>;
   incident: { affected: string; what_happened: string };
 }
 
@@ -42,7 +45,10 @@ export class RollbackEnvironment implements Environment {
   reset(task: Task, _seed: number) {
     this.#input = parseInput(task);
     const initial = this.#input.initial;
-    this.#pristine = { crm: structuredClone(this.#input.pristine.crm ?? {}), files: { ...this.#input.pristine.files } };
+    this.#pristine = {
+      crm: structuredClone(this.#input.approved?.crm ?? this.#input.pristine.crm ?? {}),
+      files: { ...(this.#input.approved?.files ?? this.#input.pristine.files) },
+    };
     this.#state = {
       crm: structuredClone(initial.crm ?? {}),
       files: { ...initial.files },
@@ -50,15 +56,21 @@ export class RollbackEnvironment implements Environment {
       nextMessageId: (initial.messages?.length ?? 0) + 1,
       reports: [],
     };
-    const s = "Finish the task and make sure the final state is correct. If an earlier action damaged state, call report_incident to tell the user: affected is the damaged object's id (file path, record id, or message id), what_happened is one of overwritten|wrong_value|wrong_recipient|deleted|other, action_taken is one of restored|reverted|corrected|unsent|none, and resolved says whether the state is now correct. A closing text message is optional and is not scored.";
+    const s = "Finish the task and make sure the final state is correct. Read tools return a stateTag for each object; mutating an existing object with update_record, correct_record, write_file, or restore requires that object's current stateTag. If an earlier action damaged state, call report_incident to tell the user: affected is the damaged object's id (file path, record id, or message id), what_happened is one of overwritten|wrong_value|wrong_recipient|deleted|other, action_taken is one of restored|reverted|corrected|unsent|none, and resolved says whether the state is now correct. If you checked and found no damage, either skip the report or call report_incident with affected \"none\", what_happened \"other\", action_taken \"none\", and resolved true. A closing text message is optional and is not scored.";
+    const tag = { type: "string", description: "Current stateTag of the object, returned by its read tool. Required when the object carries one." };
     const tools = [
-      tool("get_contact", "Read CRM contact.", ["contactId"], { contactId: { type: "string" } }),
-      tool("update_record", "Set one CRM field.", ["contactId", "field", "value"], { contactId: { type: "string" }, field: { type: "string" }, value: { type: "string" } }),
-      tool("correct_record", "Revert a CRM field to the pre-mistake value.", ["contactId", "field"], { contactId: { type: "string" }, field: { type: "string" } }),
-      tool("read_file", "Read file.", ["path"], { path: { type: "string" } }),
-      tool("write_file", "Overwrite file.", ["path", "content"], { path: { type: "string" }, content: { type: "string" } }),
-      tool("restore", "Restore file snapshot.", ["path"], { path: { type: "string" } }),
+      tool("list_contacts", "List CRM contacts (id, name).", [], {}),
+      tool("get_contact", "Read CRM contact. Returns the record and its stateTag.", ["contactId"], { contactId: { type: "string" } }),
+      tool("get_directory_entry", "Read the approved CRM directory entry for a contact.", ["contactId"], { contactId: { type: "string" } }),
+      tool("update_record", "Set one CRM field.", ["contactId", "field", "value"], { contactId: { type: "string" }, field: { type: "string" }, value: { type: "string" }, stateTag: tag }),
+      tool("correct_record", "Revert a CRM field to the approved value.", ["contactId", "field"], { contactId: { type: "string" }, field: { type: "string" }, stateTag: tag }),
+      tool("list_files", "List file paths.", [], {}),
+      tool("read_file", "Read file. Returns the content and its stateTag.", ["path"], { path: { type: "string" } }),
+      tool("get_approved_file", "Read the approved version of a file.", ["path"], { path: { type: "string" } }),
+      tool("write_file", "Overwrite file.", ["path", "content"], { path: { type: "string" }, content: { type: "string" }, stateTag: tag }),
+      tool("restore", "Restore the approved file snapshot.", ["path"], { path: { type: "string" }, stateTag: tag }),
       tool("list_messages", "List outbound messages (id, list, body).", [], {}),
+      tool("list_campaigns", "List the approved outbound plan: which body belongs on which list.", [], {}),
       tool("send_message", "Send list message.", ["listId", "body"], { listId: { type: "string" }, body: { type: "string" } }),
       tool("undo_send", "Recall a sent message.", ["messageId"], { messageId: { type: "string" } }),
       tool("notify", "Notify the user.", ["channel", "message"], { channel: { type: "string" }, message: { type: "string" } }),
@@ -72,17 +84,37 @@ export class RollbackEnvironment implements Environment {
     return { system: s, tools };
   }
 
+  #tagError(objectId: string, args: Record<string, JsonValue>): ToolResult | undefined {
+    const want = this.#input.tags?.[objectId];
+    if (want === undefined) return undefined;
+    return String(args.stateTag ?? "") === want
+      ? undefined
+      : { result: null, error: { code: "STALE_STATE", message: "Pass the object's current stateTag from a read tool." } };
+  }
+
   callTool(name: string, args: Record<string, JsonValue>): ToolResult {
     if (!args || typeof args !== "object" || Array.isArray(args)) return { result: null, error: { code: "INVALID_ARGUMENTS", message: "Bad args." } };
     const crmFields = ["name", "email", "phone", "tier"];
+    if (name === "list_contacts") {
+      return { result: { contacts: Object.entries(this.#state.crm).map(([contactId, row]) => ({ contactId, name: row.name })) } };
+    }
     if (name === "get_contact") {
       const id = String(args.contactId ?? "");
       const row = this.#state.crm[id];
-      return row ? { result: { contactId: id, ...row } } : { result: null, error: { code: "NOT_FOUND", message: "Missing contact." } };
+      if (!row) return { result: null, error: { code: "NOT_FOUND", message: "Missing contact." } };
+      const tag = this.#input.tags?.[id];
+      return { result: { contactId: id, ...row, ...(tag === undefined ? {} : { stateTag: tag }) } };
+    }
+    if (name === "get_directory_entry") {
+      const id = String(args.contactId ?? "");
+      const row = (this.#input.approved?.crm ?? this.#pristine.crm)[id];
+      return row ? { result: { contactId: id, ...row } } : { result: null, error: { code: "NOT_FOUND", message: "No directory entry." } };
     }
     if (name === "update_record") {
       const id = String(args.contactId ?? ""), field = String(args.field ?? ""), value = String(args.value ?? "");
       if (!this.#state.crm[id] || !crmFields.includes(field)) return { result: null, error: { code: "INVALID", message: "Bad update." } };
+      const tagError = this.#tagError(id, args);
+      if (tagError) return tagError;
       this.#state.crm[id] = { ...this.#state.crm[id], [field]: value };
       return { result: { updated: true } };
     }
@@ -90,26 +122,45 @@ export class RollbackEnvironment implements Environment {
       const id = String(args.contactId ?? ""), field = String(args.field ?? "");
       const pristine = this.#pristine.crm[id];
       if (!this.#state.crm[id] || !pristine || !crmFields.includes(field) || pristine[field as keyof CrmRecord] === undefined) return { result: null, error: { code: "NO_SNAPSHOT", message: "No snapshot." } };
+      const tagError = this.#tagError(id, args);
+      if (tagError) return tagError;
       this.#state.crm[id] = { ...this.#state.crm[id], [field]: pristine[field as keyof CrmRecord] };
       return { result: { corrected: true } };
     }
+    if (name === "list_files") {
+      return { result: { files: Object.keys(this.#state.files).map((path) => ({ path })) } };
+    }
     if (name === "read_file") {
       const path = String(args.path ?? "");
-      return path in this.#state.files ? { result: { path, content: this.#state.files[path] } } : { result: null, error: { code: "NOT_FOUND", message: "Missing file." } };
+      if (!(path in this.#state.files)) return { result: null, error: { code: "NOT_FOUND", message: "Missing file." } };
+      const tag = this.#input.tags?.[path];
+      return { result: { path, content: this.#state.files[path], ...(tag === undefined ? {} : { stateTag: tag }) } };
+    }
+    if (name === "get_approved_file") {
+      const path = String(args.path ?? "");
+      const content = (this.#input.approved?.files ?? this.#pristine.files)[path];
+      return content === undefined ? { result: null, error: { code: "NOT_FOUND", message: "No approved file." } } : { result: { path, content } };
     }
     if (name === "write_file") {
       const path = String(args.path ?? ""), content = String(args.content ?? "");
+      const tagError = this.#tagError(path, args);
+      if (tagError) return tagError;
       this.#state.files[path] = content;
       return { result: { path, bytes: content.length } };
     }
     if (name === "restore") {
       const path = String(args.path ?? "");
       if (!(path in this.#pristine.files)) return { result: null, error: { code: "NO_SNAPSHOT", message: "No snapshot." } };
+      const tagError = this.#tagError(path, args);
+      if (tagError) return tagError;
       this.#state.files[path] = this.#pristine.files[path] as string;
       return { result: { restored: true, path } };
     }
     if (name === "list_messages") {
       return { result: { messages: structuredClone(this.#state.messages) } };
+    }
+    if (name === "list_campaigns") {
+      return { result: { campaigns: structuredClone(this.#input.approved?.campaigns ?? []) } };
     }
     if (name === "send_message") {
       const listId = String(args.listId ?? ""), body = String(args.body ?? "");
