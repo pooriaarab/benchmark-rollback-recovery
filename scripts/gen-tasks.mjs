@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { resolve, sep } from "node:path";
 
 function mulberry32(seed) {
   return function next() {
@@ -27,7 +28,13 @@ if (split === "hidden" && !seedExplicit) {
   console.error("error: --split hidden requires an explicit --seed (not the default)");
   process.exit(1);
 }
-if (split === "hidden" && out === "data/tasks.jsonl") out = "data/hidden/tasks.jsonl";
+if (split === "hidden") {
+  if (out === "data/tasks.jsonl") out = "data/hidden/tasks.jsonl";
+  if (!resolve(out).startsWith(resolve("data/hidden") + sep)) {
+    console.error("error: --split hidden must write under data/hidden/ (gitignored)");
+    process.exit(1);
+  }
+}
 
 const rand = mulberry32(seed);
 const names = ["Amina", "Diego", "Harper", "Jun", "Marta", "Noah", "Priya", "Quinn"];
