@@ -8,7 +8,7 @@ Directory: https://aibenchmarkindex.com/benchmarks/benchmark-rollback-recovery
 
 ## Exports
 
-The root exports `benchmark`, `run`, and `score`. `benchmark-rollback-recovery/api` exports the fetch-style `handler`. `benchmark-rollback-recovery/mcp` exports MCP builders.
+The root exports `benchmark`, `createRollbackBenchmark`, `run`, and `score`. `benchmark-rollback-recovery/api` exports the fetch-style `handler` and `createApiHandler`. `benchmark-rollback-recovery/mcp` exports MCP builders. Alternate task files are accepted via the `tasks` option (CLI `--tasks`, SDK `tasks`, `RRB_TASKS_FILE` for the API). MCP callers must allow-list the path first with `RRB_TASKS_ALLOW` (path-delimited entries).
 
 ## Commands
 
