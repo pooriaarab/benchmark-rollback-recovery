@@ -25,6 +25,10 @@ published yet; `0.1.0` collects everything before the first release.
   names, domains, lists, file stems, bodies, and prompt phrasings are wider.
 - `docs/grading.md` describes the structured disclosure check and its real
   limits.
+- MCP `tasks` arguments must match an `RRB_TASKS_ALLOW` entry so a connected
+  client cannot read the holdout split or other in-package files.
+- `RRB_TASKS_ALLOW` splits on `path.delimiter`, and an invalid task file fails
+  with a fixed "not valid task JSONL" error instead of the raw parse message.
 
 ### Removed
 

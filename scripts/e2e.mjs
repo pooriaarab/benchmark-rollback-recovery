@@ -292,7 +292,18 @@ try {
   assert.ok(listed.tasks.every((t) => t.id.startsWith("hid-")), "API RRB_TASKS_FILE serves the hidden split");
 } finally { if (hidServer.exitCode === null) { hidServer.kill("SIGTERM"); await once(hidServer, "exit"); } }
 
-const transport = new StdioClientTransport({ command: process.execPath, args: ["dist/cli.js", "mcp"], cwd: process.cwd(), stderr: "pipe" });
+// MCP caller-supplied task paths must sit inside RRB_TASKS_ALLOW. Allow-list
+// the artifacts dir so the hidden split is reachable, then check refusals for
+// package files outside it (holdout dir, package.json) and that a bad JSONL
+// error never echoes file contents back to the caller.
+await writeFile("artifacts/not-tasks.txt", "LEAK_MARKER=do-not-echo this is not jsonl");
+const transport = new StdioClientTransport({
+  command: process.execPath,
+  args: ["dist/cli.js", "mcp"],
+  cwd: process.cwd(),
+  stderr: "pipe",
+  env: { ...process.env, RRB_TASKS_ALLOW: "artifacts" },
+});
 const client = new Client({ name: "benchmark-rollback-recovery-e2e", version: "0.1.0" });
 await client.connect(transport); let toolNames;
 try {
@@ -310,6 +321,17 @@ try {
   const hidTasks = await client.callTool({ name: "list_tasks", arguments: { tasks: "artifacts/hidden-check.jsonl" } });
   assert.notEqual(hidTasks.isError, true);
   assert.ok(JSON.parse(hidTasks.content[0].text).tasks.every((t) => t.id.startsWith("hid-")), "MCP list_tasks honours the tasks option");
+  for (const refused of ["data/hidden/tasks.jsonl", "data/tasks.jsonl", "package.json", ".env"]) {
+    const denied = await client.callTool({ name: "list_tasks", arguments: { tasks: refused } });
+    assert.equal(denied.isError, true, `MCP must refuse non-allow-listed path ${refused}`);
+    assert.match(denied.content[0].text, /RRB_TASKS_ALLOW/, `${refused} refusal names the allow-list`);
+    const deniedGet = await client.callTool({ name: "get_task", arguments: { taskId: "hid-crm-01", tasks: refused } });
+    assert.equal(deniedGet.isError, true, `MCP get_task must refuse ${refused}`);
+  }
+  const badFile = await client.callTool({ name: "list_tasks", arguments: { tasks: "artifacts/not-tasks.txt" } });
+  assert.equal(badFile.isError, true, "invalid JSONL inside the allow-list still fails");
+  assert.match(badFile.content[0].text, /not valid task JSONL/);
+  assert.ok(!badFile.content[0].text.includes("LEAK_MARKER"), "parse error must not echo file contents");
   const runResult = await client.callTool({ name: "run_benchmark", arguments: { model: "offline", provider: "mock" } });
   assert.notEqual(runResult.isError, true, "run_benchmark with the mock provider succeeds");
   const runReport = JSON.parse(runResult.content[0].text);

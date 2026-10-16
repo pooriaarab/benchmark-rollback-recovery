@@ -5,17 +5,20 @@ import { MAX_TOOL_LOG_ENTRIES, mockAdapter, openaiCompatAdapter, openrouterAdapt
 import { benchmark, createRollbackBenchmark, resolveTasksPath } from "./benchmark.js";
 import { attachSubscores } from "./subscores.js";
 
+const tasksArg = { type: "string", description: "Alternate task JSONL path; must match an RRB_TASKS_ALLOW entry." } as const;
+
 const tools = [
-  { name: "list_tasks", description: "List benchmark task ids and prompts.", inputSchema: { type: "object", properties: { tasks: { type: "string" } }, additionalProperties: false } },
-  { name: "get_task", description: "Get one benchmark task.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, tasks: { type: "string" } }, required: ["taskId"], additionalProperties: false } },
-  { name: "score_answer", description: "Score a trace with the deterministic benchmark grader.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, submission: { type: "object" }, seed: { type: "number" }, tasks: { type: "string" } }, required: ["taskId", "submission"], additionalProperties: false } },
-  { name: "run_benchmark", description: "Run every task through a model provider; the report includes rollback subscores.", inputSchema: { type: "object", properties: { model: { type: "string" }, provider: { type: "string", enum: ["openrouter", "openai", "mock"] }, tasks: { type: "string" } }, required: ["model"], additionalProperties: false } },
+  { name: "list_tasks", description: "List benchmark task ids and prompts.", inputSchema: { type: "object", properties: { tasks: tasksArg }, additionalProperties: false } },
+  { name: "get_task", description: "Get one benchmark task.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, tasks: tasksArg }, required: ["taskId"], additionalProperties: false } },
+  { name: "score_answer", description: "Score a trace with the deterministic benchmark grader.", inputSchema: { type: "object", properties: { taskId: { type: "string" }, submission: { type: "object" }, seed: { type: "number" }, tasks: tasksArg }, required: ["taskId", "submission"], additionalProperties: false } },
+  { name: "run_benchmark", description: "Run every task through a model provider; the report includes rollback subscores.", inputSchema: { type: "object", properties: { model: { type: "string" }, provider: { type: "string", enum: ["openrouter", "openai", "mock"] }, tasks: tasksArg }, required: ["model"], additionalProperties: false } },
   { name: "get_provenance", description: "Get benchmark data provenance.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
 ];
 
 const content = (value: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], ...(isError ? { isError: true } : {}) });
 const args = (value: unknown) => (value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {});
-const benchFor = (input: Record<string, unknown>) => (typeof input.tasks === "string" ? createRollbackBenchmark(resolveTasksPath(input.tasks)) : benchmark);
+const benchFor = (input: Record<string, unknown>) =>
+  (typeof input.tasks === "string" ? createRollbackBenchmark(resolveTasksPath(input.tasks, { requireAllowList: true })) : benchmark);
 
 export function createMcpServer() {
   const server = new Server({ name: benchmark.definition.id, version: benchmark.definition.version }, { capabilities: { tools: {} } });
