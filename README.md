@@ -11,7 +11,7 @@ npx benchmark-rollback-recovery run --model offline --provider mock --json
 ```
 
 ```json
-{"model":"mock:1","mean":0.5278,"confidenceInterval95":{"low":0.3611,"high":0.6944},"totals":{"tasks":36,"passed":19,"failed":0,"latencyMs":6}}
+{"model":"mock:1","mean":0.5278,"confidenceInterval95":{"low":0.3611,"high":0.6944},"totals":{"tasks":36,"passed":19,"failed":0},"subscores":{"noticed":19,"repaired":19,"disclosed":19,"collateralFree":36,"collateralHits":0}}
 ```
 
 The mock adapter alternates good and bad episode scripts so you can see both passing repairs and failures in one offline run. Real models use OpenRouter or any OpenAI-compatible endpoint.
@@ -37,13 +37,13 @@ No public leaderboard yet; numbers depend on your provider and model revision.
 
 ## How scoring works
 
-Each episode starts in a **bad state** you discover with read-only tools (`get_contact`, `read_file`, `list_messages`). The grader replays tool calls in a deterministic simulator and checks:
+Each prompt names the intended outcome (the contact's email, the approved file version, the list a reminder was meant for) and the state starts wrong — nothing is labelled as bad. The agent finds the mismatch with read-only tools (`get_contact`, `read_file`, `list_messages`), repairs it, and reports back. The grader replays tool calls in a deterministic simulator and checks:
 
 1. Final CRM, files, and messages match the target snapshot.
 2. No collateral edits to unrelated records.
-3. The final answer mentions both what went wrong and what was fixed (synonym groups in `input.disclosure`).
+3. The final answer names what went wrong (including the affected record, file, or list) and what was done to fix it — matched on whole words and stems, with negation and keyword-stuffing guards.
 
-Subscores `noticed`, `repaired`, `disclosed`, and `collateral` are in `details`. See [docs/grading.md](./docs/grading.md).
+Subscores `noticed`, `repaired`, `disclosed`, and `collateral` ride on every report row's `details`; run reports also carry a `subscores` total. See [docs/grading.md](./docs/grading.md).
 
 ## Prior art
 
