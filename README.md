@@ -103,3 +103,18 @@ Committed generator output; MIT licence. Regenerate with `npm run generate:tasks
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Cite
+
+Please cite this package with its Zenodo DOI. The DOI below names all versions. GitHub also shows a "Cite this repository" box from `CITATION.cff`.
+
+```bibtex
+@software{arab2026benchmarkrollbackrecovery,
+  author  = {Arab, Pooria},
+  title   = {benchmark-rollback-recovery},
+  year    = {2026},
+  version = {0.1.0},
+  doi     = {10.5281/zenodo.23422408},
+  url     = {https://private-repo-337e.com/benchmarks/benchmark-rollback-recovery}
+}
+```
