@@ -1,3 +1,27 @@
 {
-  "prefix": "brbk"
+  "prefix": "brbk",
+  "excludeGlobs": [
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/bun.lockb",
+    "**/pnpm-lock.yaml",
+    "**/yarn.lock",
+    "**/Cargo.lock",
+    "dist/**",
+    "build/**",
+    ".next/**",
+    "out/**",
+    "vendor/**",
+    "**/generated/**",
+    "**/__snapshots__/**",
+    "**/*.snap",
+    "**/*.generated.*",
+    "**/migrations/**",
+    "**/*.min.js",
+    "**/*.map",
+    "**/*.log",
+    "**/*.tsbuildinfo",
+    "**/*.{svg,png,jpg,jpeg,gif,webp,ico,woff,woff2,ttf,otf,mp4,pdf,zip}",
+    "data/tasks.jsonl"
+  ]
 }
