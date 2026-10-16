@@ -155,6 +155,38 @@ for (const task of tasks) {
 }
 assert.deepEqual(solvedByKind, { crm: 12, file: 12, message: 12 });
 
+// Read-state tags gate mutating tools: a tagged fixture refuses a write that
+// lacks the current stateTag or carries a wrong one (STALE_STATE), and the
+// tag a read tool hands back lets the same write through.
+{
+  const taggedTask = {
+    id: "e2e-tagged-fixture",
+    kind: "episode",
+    prompt: "Restore docs/a.txt to the approved version and report it.",
+    input: {
+      scenario: "file",
+      allowLists: [],
+      approved: { files: { "docs/a.txt": "approved body." } },
+      pristine: { files: { "docs/a.txt": "approved body." } },
+      tags: { "docs/a.txt": "st-e2e" },
+      initial: { files: { "docs/a.txt": "stale body." } },
+      target: { files: { "docs/a.txt": "approved body." } },
+      incident: { affected: "docs/a.txt", what_happened: "overwritten" },
+    },
+  };
+  const tagEnv = new RollbackEnvironment();
+  await tagEnv.reset(taggedTask, 1);
+  const blind = tagEnv.callTool("restore", { path: "docs/a.txt" });
+  assert.equal(blind.error?.code, "STALE_STATE", "restore without stateTag must fail");
+  const wrongTag = tagEnv.callTool("write_file", { path: "docs/a.txt", content: "x", stateTag: "st-wrong" });
+  assert.equal(wrongTag.error?.code, "STALE_STATE", "wrong stateTag must fail");
+  const read = tagEnv.callTool("read_file", { path: "docs/a.txt" });
+  assert.equal(read.result?.stateTag, "st-e2e", "read tool returns the stateTag");
+  const tagged = tagEnv.callTool("restore", { path: "docs/a.txt", stateTag: read.result.stateTag });
+  assert.equal(tagged.error, undefined, "tagged restore succeeds");
+  assert.equal(tagEnv.state().files["docs/a.txt"], "approved body.");
+}
+
 for (const task of tasks) {
   const solved = solvedSubmissions.get(task.id);
   const goodScore = 1;
