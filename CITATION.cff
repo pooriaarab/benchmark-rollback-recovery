@@ -8,6 +8,7 @@ authors:
 version: "0.1.0"
 date-released: 2026-10-16
 license: MIT
+doi: 10.5281/zenodo.23422408
 repository-code: https://github.com/pooriaarab/benchmark-rollback-recovery
 url: "https://aibenchmarkindex.com/benchmarks/benchmark-rollback-recovery"
 abstract: "Does the agent notice its own bad action, repair it and say so?"
