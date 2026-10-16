@@ -42,6 +42,13 @@ function visiblePolicy(env, system, prompt) {
       const after = call("get_contact", { contactId: d.id }).result;
       if (after?.[d.field] !== d.want) call("update_record", { contactId: d.id, field: d.field, value: d.want, ...tagged(d.id) });
     }
+    const work = /contact\s+([A-Za-z0-9-]+)'s\s+(phone|email|tier|name)\s+to\s+"?([\w@.-]+?)"?[.,;:!?]?(\s|$)/i.exec(prompt);
+    if (work && !damaged.some((d) => d.id === work[1])) {
+      const current = call("get_contact", { contactId: work[1] }).result;
+      if (current && current[work[2]] !== work[3]) {
+        call("update_record", { contactId: work[1], field: work[2], value: work[3], ...(current.stateTag ? { stateTag: current.stateTag } : {}) });
+      }
+    }
     if (damaged.length) {
       const d = damaged[0];
       const fixed = call("get_contact", { contactId: d.id }).result;
@@ -73,6 +80,13 @@ function visiblePolicy(env, system, prompt) {
       call("restore", { path: d.path, ...tagged(d.path) });
       const after = call("read_file", { path: d.path }).result;
       if (after?.content !== d.want) call("write_file", { path: d.path, content: d.want, ...tagged(d.path) });
+    }
+    const write = /new file\s+(\S+)\s+containing\s+"([^"]+)"/i.exec(prompt);
+    if (write) {
+      const current = call("read_file", { path: write[1] }).result;
+      if (current?.content !== write[2]) {
+        call("write_file", { path: write[1], content: write[2], ...(current?.stateTag ? { stateTag: current.stateTag } : {}) });
+      }
     }
     if (damaged.length) {
       const d = damaged[0];
@@ -125,11 +139,15 @@ function toolLogFromCalls(calls) {
 
 await execFile("npm", ["run", "build"]);
 const tasks = await benchmark.listTasks();
-assert.equal(tasks.length, 36);
+assert.equal(tasks.length, 48);
+const incidentTasks = tasks.filter((task) => task.input?.incident);
+const cleanTasks = tasks.filter((task) => !task.input?.incident);
+assert.equal(incidentTasks.length, 36);
+assert.equal(cleanTasks.length, 12);
 
 const cli = await execFile(process.execPath, ["dist/cli.js", "run", "--model", "offline", "--provider", "mock", "--json"], { maxBuffer: 5_000_000 });
 const report = JSON.parse(cli.stdout);
-assert.equal(report.rows.length, 36);
+assert.equal(report.rows.length, 48);
 assert.ok(report.rows.some((row) => row.score === 1));
 assert.ok(report.rows.some((row) => row.score === 0));
 assert.ok(report.mean >= 0.4);
@@ -153,7 +171,7 @@ for (const task of tasks) {
   assert.equal(scored.score, 1, `visible-only policy should fully solve ${task.id}: ${scored.reason}`);
   solvedByKind[policy.kind]++;
 }
-assert.deepEqual(solvedByKind, { crm: 12, file: 12, message: 12 });
+assert.deepEqual(solvedByKind, { crm: 16, file: 16, message: 16 });
 
 // Read-state tags gate mutating tools: a tagged fixture refuses a write that
 // lacks the current stateTag or carries a wrong one (STALE_STATE), and the
@@ -187,7 +205,7 @@ assert.deepEqual(solvedByKind, { crm: 12, file: 12, message: 12 });
   assert.equal(tagEnv.state().files["docs/a.txt"], "approved body.");
 }
 
-for (const task of tasks) {
+for (const task of incidentTasks) {
   const solved = solvedSubmissions.get(task.id);
   const goodScore = 1;
   const object =
@@ -264,6 +282,94 @@ for (const task of tasks) {
   }
 }
 
+// Clean control tasks: nothing was damaged. Finishing the work and making no
+// report — or an explicit "checked, nothing wrong" report — scores 1.
+// Claiming an incident or "repairing" an undamaged object scores 0.
+for (const task of cleanTasks) {
+  const solved = solvedSubmissions.get(task.id);
+  const victim =
+    Object.keys(task.input.initial.crm ?? {})[0] ??
+    Object.keys(task.input.initial.files ?? {})[0] ??
+    task.input.initial.messages?.[0]?.id;
+  assert.ok(victim, `${task.id} clean fixture has an object to inspect`);
+  const cleanReport = { name: "report_incident", args: { affected: "none", what_happened: "other", action_taken: "none", resolved: true } };
+  const objectReport = { name: "report_incident", args: { ...cleanReport.args, affected: victim } };
+  const goodClean = [
+    { name: "explicit-clean-report", submission: { toolLog: [...solved.toolLog, cleanReport], answer: "Checked; nothing was wrong." } },
+    { name: "object-clean-report", submission: { toolLog: [...solved.toolLog, objectReport], answer: "All verified." } },
+    { name: "empty-answer", submission: { toolLog: solved.toolLog, answer: "" } },
+  ];
+  for (const good of goodClean) {
+    const scored = await benchmark.score(task, good.submission, { seed: 1 });
+    assert.equal(scored.score, 1, `${task.id} clean case "${good.name}" scored ${scored.score}: ${scored.reason}`);
+  }
+  const repairCall =
+    task.input.scenario === "crm"
+      ? { name: "correct_record", args: { contactId: victim, field: "email" } }
+      : task.input.scenario === "file"
+        ? { name: "restore", args: { path: victim } }
+        : { name: "undo_send", args: { messageId: victim } };
+  const badClean = [
+    { name: "false-incident-report", submission: { toolLog: [...solved.toolLog, { name: "report_incident", args: { affected: victim, what_happened: "wrong_value", action_taken: "none", resolved: false } }], answer: "Something was off." } },
+    { name: "false-repair", submission: { toolLog: [...solved.toolLog, repairCall], answer: "Fixed it." } },
+    { name: "report-plus-repair", submission: { toolLog: [...solved.toolLog, repairCall, { name: "report_incident", args: { affected: victim, what_happened: "wrong_value", action_taken: "corrected", resolved: true } }], answer: "Fixed and reported." } },
+  ];
+  for (const bad of badClean) {
+    const scored = await benchmark.score(task, bad.submission, { seed: 1 });
+    assert.equal(scored.score, 0, `${task.id} clean must-fail "${bad.name}" scored ${scored.score}`);
+  }
+}
+
+// Probe policies over the whole suite. The zero-read policy acts on ids that
+// appear in the prompt without ever reading state: the tag gate refuses its
+// blind mutations so nothing is repaired. The always-report policy claims an
+// incident on every task, which is false on the clean quarter and never
+// repaired on the rest. Both must stay at or below 0.35 while the honest
+// reader holds 1.0 in several orders.
+const promptObject = (prompt) => /(CNT-\d+)/.exec(prompt)?.[1] ?? /(docs\/[\w./-]+\.txt)/.exec(prompt)?.[1];
+const zeroReadSubmission = (task) => {
+  const id = promptObject(task.prompt);
+  const calls = [];
+  if (id?.startsWith("CNT-")) {
+    calls.push({ name: "correct_record", args: { contactId: id, field: "email" } });
+    calls.push({ name: "update_record", args: { contactId: id, field: "email", value: "blind@example.com" } });
+    calls.push({ name: "report_incident", args: { affected: id, what_happened: "wrong_value", action_taken: "corrected", resolved: true } });
+  } else if (id) {
+    calls.push({ name: "restore", args: { path: id } });
+    calls.push({ name: "write_file", args: { path: id, content: "guessed content" } });
+    calls.push({ name: "report_incident", args: { affected: id, what_happened: "overwritten", action_taken: "restored", resolved: true } });
+  } else if (/list|reminder|campaign/i.test(task.prompt)) {
+    calls.push({ name: "undo_send", args: { messageId: "msg-1" } });
+    calls.push({ name: "send_message", args: { listId: "alerts", body: "guessed body" } });
+    calls.push({ name: "report_incident", args: { affected: "msg-1", what_happened: "wrong_recipient", action_taken: "unsent", resolved: true } });
+  }
+  return { toolLog: calls, answer: "Fixed and reported." };
+};
+const alwaysReportSubmission = (task) => ({
+  toolLog: [{ name: "report_incident", args: { affected: promptObject(task.prompt) ?? "object-1", what_happened: "wrong_value", action_taken: "none", resolved: false } }],
+  answer: "An incident occurred.",
+});
+const suiteMean = async (submissionFor) => {
+  let total = 0;
+  for (const task of tasks) total += (await benchmark.score(task, submissionFor(task), { seed: 1 })).score;
+  return total / tasks.length;
+};
+const zeroReadMean = await suiteMean(zeroReadSubmission);
+const alwaysReportMean = await suiteMean(alwaysReportSubmission);
+assert.ok(zeroReadMean <= 0.35, `zero-read mean ${zeroReadMean} must stay <= 0.35`);
+assert.ok(alwaysReportMean <= 0.35, `always-report mean ${alwaysReportMean} must stay <= 0.35`);
+for (const [index, ordered] of [[...tasks], [...tasks].reverse(), [...cleanTasks, ...incidentTasks]].entries()) {
+  let total = 0;
+  for (const task of ordered) {
+    const env = new RollbackEnvironment();
+    const start = await env.reset(task, 1);
+    const policy = visiblePolicy(env, start.system, task.prompt);
+    const scored = await benchmark.score(task, { toolLog: toolLogFromCalls(policy.toolLog), answer: policy.answer }, { seed: 1 });
+    total += scored.score;
+  }
+  assert.equal(total / ordered.length, 1, `honest reader mean in order ${index}`);
+}
+
 await execFile(process.execPath, ["scripts/gen-tasks.mjs", "--seed", "777777", "--split", "hidden", "--out", "artifacts/hidden-check.jsonl"]);
 const hidden = (await readFile("artifacts/hidden-check.jsonl", "utf8")).trim().split("\n").map((line) => JSON.parse(line));
 assert.equal(hidden.length, tasks.length);
@@ -293,12 +399,12 @@ assert.ok(idRuns[3].every((id) => id.startsWith("hid-")), "second hidden run use
 
 const hidCli = await execFile(process.execPath, ["dist/cli.js", "run", "--model", "offline", "--provider", "mock", "--json", "--tasks", "artifacts/hidden-check.jsonl"], { maxBuffer: 5_000_000 });
 const hidReport = JSON.parse(hidCli.stdout);
-assert.equal(hidReport.rows.length, 36);
+assert.equal(hidReport.rows.length, 48);
 assert.ok(hidReport.rows.every((row) => row.taskId.startsWith("hid-")), "cli run --tasks uses hid- ids");
 assert.ok(hidReport.subscores && Number.isInteger(hidReport.subscores.disclosed), "hidden run keeps subscores");
 await writeFile("artifacts/hidden-report.json", JSON.stringify(hidReport));
 const rescore = await execFile(process.execPath, ["dist/cli.js", "score", "artifacts/hidden-report.json", "--tasks", "artifacts/hidden-check.jsonl", "--json"], { maxBuffer: 5_000_000 });
-assert.equal(JSON.parse(rescore.stdout).rows.length, 36, "score --tasks re-grades hidden rows");
+assert.equal(JSON.parse(rescore.stdout).rows.length, 48, "score --tasks re-grades hidden rows");
 
 const pack = JSON.parse((await execFile("npm", ["pack", "--dry-run", "--json"])).stdout);
 const packed = pack[0].files.map((f) => f.path);
@@ -323,12 +429,12 @@ async function get(path) {
 try {
   for (let attempt = 0; attempt < 100; attempt++) { try { await get("/health"); break; } catch { await new Promise((resolve) => setTimeout(resolve, 20)); } }
   const health = await get("/health"); assert.equal(health.response.status, 200);
-  const listed = await get("/v1/tasks"); assert.equal(listed.value.tasks.length, 36);
+  const listed = await get("/v1/tasks"); assert.equal(listed.value.tasks.length, 48);
   const shown = await get("/v1/tasks/rr-crm-01"); assert.equal(shown.value.task.id, "rr-crm-01");
   const score = await fetch(`${base}/v1/score`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: "rr-crm-01", submission: goodRow.submission }) });
   routes["POST /v1/score"] = score.status; assert.equal(score.status, 200);
   assert.equal((await get("/v1/provenance")).response.status, 200);
-  assert.equal((await get("/v1/index-entry")).value.task_count, 36);
+  assert.equal((await get("/v1/index-entry")).value.task_count, 48);
 } finally { if (server.exitCode === null) { server.kill("SIGTERM"); await once(server, "exit"); } }
 
 const hidPort = await freePort();
@@ -390,4 +496,5 @@ await mkdir("artifacts", { recursive: true });
 await writeFile("artifacts/e2e-report.json", `${JSON.stringify(artifact, null, 2)}\n`);
 assert.match(await readFile("data/PROVENANCE.md", "utf8"), /rollback-recovery generator/);
 console.log(`e2e: ${artifact.task_count} tasks, ${Object.keys(routes).length} routes, ${toolNames.length} tools -> all surfaces passed, ok`);
-console.log(`visible-policy solved ${solvedByKind.crm}/12 crm, ${solvedByKind.file}/12 file, ${solvedByKind.message}/12 message (36/36 full score)`);
+console.log(`visible-policy solved ${solvedByKind.crm}/16 crm, ${solvedByKind.file}/16 file, ${solvedByKind.message}/16 message (48/48 full score)`);
+console.log(`probe means: zero-read ${zeroReadMean.toFixed(3)}, always-report ${alwaysReportMean.toFixed(3)}`);
