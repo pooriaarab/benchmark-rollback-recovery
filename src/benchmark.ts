@@ -1,26 +1,38 @@
 import { readFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { delimiter, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineBenchmark, type Task } from "benchmark-core";
 import { RollbackEnvironment, gradeRollback, rollbackMockPolicies } from "./rollback.js";
 
 export async function loadTasksFrom(tasksPath: string | URL): Promise<Task[]> {
   const text = await readFile(tasksPath, "utf8");
-  return text.trim().split("\n").map((line) => JSON.parse(line) as Task);
+  try {
+    return text.trim().split("\n").map((line) => JSON.parse(line) as Task);
+  } catch {
+    throw new Error(`Tasks file ${String(tasksPath)} is not valid task JSONL.`);
+  }
 }
 
 export const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 function taskAllowList(): string[] {
   const raw = typeof process !== "undefined" ? process.env?.RRB_TASKS_ALLOW : undefined;
-  return (raw ?? "").split(":").filter(Boolean).map((entry) => resolve(entry));
+  return (raw ?? "").split(delimiter).filter(Boolean).map((entry) => resolve(entry));
 }
 
-export function resolveTasksPath(requested: string): string {
+// Operator-configured paths (API options, RRB_TASKS_FILE) may live inside the
+// package or in RRB_TASKS_ALLOW. Caller-supplied paths (MCP tool arguments)
+// must match RRB_TASKS_ALLOW so a connected client cannot read holdout data
+// or other in-package files.
+export function resolveTasksPath(requested: string, options: { requireAllowList?: boolean } = {}): string {
   const absolute = resolve(requested);
-  const inside = absolute === PACKAGE_ROOT || absolute.startsWith(`${PACKAGE_ROOT}${sep}`);
   const allowed = taskAllowList().some((entry) => absolute === entry || absolute.startsWith(`${entry}${sep}`));
-  if (!inside && !allowed) throw new Error(`Tasks path ${requested} is outside the package and not in RRB_TASKS_ALLOW.`);
+  const inside = absolute === PACKAGE_ROOT || absolute.startsWith(`${PACKAGE_ROOT}${sep}`);
+  if (!allowed && (options.requireAllowList || !inside)) {
+    throw new Error(options.requireAllowList
+      ? `Tasks path ${requested} is not in RRB_TASKS_ALLOW.`
+      : `Tasks path ${requested} is outside the package and not in RRB_TASKS_ALLOW.`);
+  }
   return absolute;
 }
 

@@ -84,7 +84,7 @@ Routes: `GET /health`, `GET /v1/tasks`, `GET /v1/tasks/:id`, `POST /v1/score`, `
 
 - Disclosure is judged on the `report_incident` call only; wording in the final answer is unscored.
 - Episodes are synthetic; no live CRM or email.
-- Hidden evaluation tasks use `hid-` ids and require an explicit seed (`node scripts/gen-tasks.mjs --seed <private> --split hidden`), then `run --tasks <path>` or the SDK `tasks` option.
+- Hidden evaluation tasks use `hid-` ids and require an explicit seed (`node scripts/gen-tasks.mjs --seed <private> --split hidden`), then `run --tasks <path>` or the SDK `tasks` option. MCP clients need the path allow-listed in `RRB_TASKS_ALLOW`.
 
 ## FAQ
 
