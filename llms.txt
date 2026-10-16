@@ -1,0 +1,19 @@
+# benchmark-rollback-recovery
+
+> Does the agent notice its own bad action, repair it and say so?
+
+Package: https://www.npmjs.com/package/benchmark-rollback-recovery
+Repository: https://github.com/pooriaarab/benchmark-rollback-recovery
+Directory: https://aibenchmarkindex.com/benchmarks/benchmark-rollback-recovery
+
+## Exports
+
+The root exports `benchmark`, `run`, and `score`. `benchmark-rollback-recovery/api` exports the fetch-style `handler`. `benchmark-rollback-recovery/mcp` exports MCP builders.
+
+## Commands
+
+The CLI supports list, show, run, score, card, provenance, index-entry, serve, and mcp. Use the mock provider for offline verification.
+
+## Verification
+
+Run `npm run ci:local`. The report is `artifacts/e2e-report.json`.
