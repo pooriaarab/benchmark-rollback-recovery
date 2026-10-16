@@ -462,6 +462,7 @@ try {
   const health = await get("/health"); assert.equal(health.response.status, 200);
   const listed = await get("/v1/tasks"); assert.equal(listed.value.tasks.length, 48);
   const shown = await get("/v1/tasks/rr-crm-01"); assert.equal(shown.value.task.id, "rr-crm-01");
+  assert.ok(shown.value.task.input?.target, "public tasks keep the target fixture");
   const score = await fetch(`${base}/v1/score`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: "rr-crm-01", submission: goodRow.submission }) });
   routes["POST /v1/score"] = score.status; assert.equal(score.status, 200);
   assert.equal((await get("/v1/provenance")).response.status, 200);
@@ -474,6 +475,19 @@ try {
   for (let attempt = 0; attempt < 100; attempt++) { try { const r = await fetch(`http://127.0.0.1:${hidPort}/health`); if (r.ok) break; } catch { await new Promise((resolve) => setTimeout(resolve, 20)); } }
   const listed = await fetch(`http://127.0.0.1:${hidPort}/v1/tasks`).then((r) => r.json());
   assert.ok(listed.tasks.every((t) => t.id.startsWith("hid-")), "API RRB_TASKS_FILE serves the hidden split");
+  // Served holdout tasks must not leak answers: no target, snapshots,
+  // incident, tags, or generator metadata. Initial state and allowLists stay.
+  const stripped = (t) => {
+    const input = t.input ?? {};
+    return !("target" in input) && !("incident" in input) && !("approved" in input) && !("pristine" in input) && !("tags" in input)
+      && !("seed" in (t.metadata ?? {})) && !("control" in (t.metadata ?? {}));
+  };
+  assert.ok(listed.tasks.every(stripped), "listed hid- tasks are stripped of answer fields");
+  const shown = await fetch(`http://127.0.0.1:${hidPort}/v1/tasks/hid-crm-01`).then((r) => r.json());
+  assert.ok(stripped(shown.task), "served hid- task is stripped");
+  assert.ok(shown.task.input?.initial && shown.task.input?.scenario, "served hid- task keeps scenario and initial state");
+  const scoredHid = await fetch(`http://127.0.0.1:${hidPort}/v1/score`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ taskId: "hid-crm-01", submission: { toolLog: [], answer: "" } }) });
+  assert.equal(scoredHid.status, 200, "scoring a hid- task still grades the stored fixture");
 } finally { if (hidServer.exitCode === null) { hidServer.kill("SIGTERM"); await once(hidServer, "exit"); } }
 
 // MCP caller-supplied task paths must sit inside RRB_TASKS_ALLOW. Allow-list
@@ -504,7 +518,13 @@ try {
   }
   const hidTasks = await client.callTool({ name: "list_tasks", arguments: { tasks: "artifacts/hidden-check.jsonl" } });
   assert.notEqual(hidTasks.isError, true);
-  assert.ok(JSON.parse(hidTasks.content[0].text).tasks.every((t) => t.id.startsWith("hid-")), "MCP list_tasks honours the tasks option");
+  const hidListed = JSON.parse(hidTasks.content[0].text).tasks;
+  assert.ok(hidListed.every((t) => t.id.startsWith("hid-")), "MCP list_tasks honours the tasks option");
+  assert.ok(hidListed.every((t) => !("target" in (t.input ?? {})) && !("incident" in (t.input ?? {}))), "MCP hid- tasks are stripped");
+  const hidShown = await client.callTool({ name: "get_task", arguments: { taskId: "hid-crm-01", tasks: "artifacts/hidden-check.jsonl" } });
+  assert.notEqual(hidShown.isError, true);
+  const hidTask = JSON.parse(hidShown.content[0].text).task;
+  assert.ok(!("target" in (hidTask.input ?? {})) && !("approved" in (hidTask.input ?? {})) && !("seed" in (hidTask.metadata ?? {})), "MCP get_task strips hid- answers");
   for (const refused of ["data/hidden/tasks.jsonl", "data/tasks.jsonl", "package.json", ".env"]) {
     const denied = await client.callTool({ name: "list_tasks", arguments: { tasks: refused } });
     assert.equal(denied.isError, true, `MCP must refuse non-allow-listed path ${refused}`);
