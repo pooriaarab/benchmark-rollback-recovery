@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 function mulberry32(seed) {
   return function next() {
@@ -33,7 +34,12 @@ if (split === "hidden" && seed === PUBLIC_SEED) {
   console.error("error: --split hidden must not reuse the public seed");
   process.exit(1);
 }
-if (split === "hidden" && out === "data/tasks.jsonl") out = "data/hidden/tasks.jsonl";
+const publicTasksPath = path.resolve("data/tasks.jsonl");
+let resolvedOut = path.resolve(out);
+if (split === "hidden" && resolvedOut === publicTasksPath) {
+  resolvedOut = path.resolve("data/hidden/tasks.jsonl");
+}
+out = resolvedOut;
 
 const rand = mulberry32(seed);
 const names = ["Amina", "Diego", "Harper", "Jun", "Marta", "Noah", "Priya", "Quinn"];
@@ -142,7 +148,6 @@ for (let i = 0; i < 12; i++) tasks.push(crmTask(i));
 for (let i = 0; i < 12; i++) tasks.push(fileTask(i));
 for (let i = 0; i < 12; i++) tasks.push(messageTask(i));
 
-const dir = out.includes("/") ? out.slice(0, out.lastIndexOf("/")) : ".";
-await mkdir(dir, { recursive: true });
+await mkdir(path.dirname(out), { recursive: true });
 await writeFile(out, `${tasks.map((t) => JSON.stringify(t)).join("\n")}\n`);
 console.log(`generated ${tasks.length} tasks (seed=${seed}, split=${split}, out=${out})`);
