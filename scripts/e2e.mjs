@@ -477,6 +477,15 @@ const hidden = await loadJsonl("artifacts/hidden-check.jsonl");
 const hidden2 = await loadJsonl("artifacts/hidden-check-2.jsonl");
 assert.equal(hidden.length, tasks.length);
 assert.ok(hidden.every((t) => t.id.startsWith("hid-")), "hidden tasks carry the hid- id prefix");
+// Ids share one numbering for incident and clean tasks, so a served id never
+// reveals the control status.
+for (const split of [tasks, hidden, hidden2]) {
+  assert.ok(split.every((t) => !t.id.includes("clean")), "task ids never name the clean controls");
+  const incidentIds = new Set(split.filter((t) => t.input.incident).map((t) => t.id));
+  const cleanIds = new Set(split.filter((t) => !t.input.incident).map((t) => t.id));
+  const numbers = (id) => Number(/-(\d+)$/.exec(id)?.[1]);
+  assert.ok([...cleanIds].some((id) => numbers(id) < Math.max(...[...incidentIds].map(numbers))), "clean ids interleave with incident ids");
+}
 for (const kind of ["crm", "file", "message"]) {
   const pub = tasks.filter((t) => t.input.scenario === kind);
   const hid = hidden.filter((t) => t.input.scenario === kind);
@@ -518,6 +527,11 @@ assert.ok(hidReport.subscores && Number.isInteger(hidReport.subscores.disclosed)
 await writeFile("artifacts/hidden-report.json", JSON.stringify(hidReport));
 const rescore = await execFile(process.execPath, ["dist/cli.js", "score", "artifacts/hidden-report.json", "--tasks", "artifacts/hidden-check.jsonl", "--json"], { maxBuffer: 5_000_000 });
 assert.equal(JSON.parse(rescore.stdout).rows.length, 48, "score --tasks re-grades hidden rows");
+
+const hidList = await execFile(process.execPath, ["dist/cli.js", "list", "--tasks", "artifacts/hidden-check.jsonl", "--json"], { maxBuffer: 5_000_000 });
+assert.ok(JSON.parse(hidList.stdout).tasks.every((t) => t.id.startsWith("hid-")), "cli list honours --tasks");
+const hidShow = await execFile(process.execPath, ["dist/cli.js", "show", "hid-crm-01", "--tasks", "artifacts/hidden-check.jsonl", "--json"], { maxBuffer: 5_000_000 });
+assert.equal(JSON.parse(hidShow.stdout).task.id, "hid-crm-01", "cli show honours --tasks");
 
 const pack = JSON.parse((await execFile("npm", ["pack", "--dry-run", "--json"])).stdout);
 const packed = pack[0].files.map((f) => f.path);

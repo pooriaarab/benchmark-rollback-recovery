@@ -15,6 +15,20 @@ function pickBench(parsed: Parsed): Benchmark<Task> {
   return typeof tasks === "string" ? createRollbackBenchmark(tasks) : benchmark;
 }
 
+function splitTasksFlag(argv: string[]): { tasks?: string; rest: string[] } {
+  const rest: string[] = [];
+  let tasks: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] as string;
+    if (arg === "--tasks") {
+      const value = argv[++i];
+      if (!value) throw new Error("--tasks needs a task JSONL path.");
+      tasks = value;
+    } else rest.push(arg);
+  }
+  return { ...(tasks ? { tasks } : {}), rest };
+}
+
 function isUsageError(error: unknown): boolean {
   const code = error !== null && typeof error === "object" ? Reflect.get(error, "code") : undefined;
   return typeof code === "string" && code.startsWith("ERR_PARSE_ARGS");
@@ -130,7 +144,13 @@ try {
         ? await serveCommand(argv.slice(1))
         : argv[0] === "mcp"
           ? await startMcp().then(() => 0)
-          : await createCli(benchmark, { bin: "benchmark-rollback-recovery" }).main(argv);
+          : argv[0] === "list" || argv[0] === "show"
+            ? await (() => {
+                const { tasks, rest } = splitTasksFlag(argv.slice(1));
+                const bench = tasks ? createRollbackBenchmark(tasks) : benchmark;
+                return createCli(bench, { bin: "benchmark-rollback-recovery" }).main([argv[0] as string, ...rest]);
+              })()
+            : await createCli(benchmark, { bin: "benchmark-rollback-recovery" }).main(argv);
 } catch (caught) {
   console.error(caught instanceof Error ? caught.message : String(caught));
   process.exitCode = isUsageError(caught) ? 1 : 2;

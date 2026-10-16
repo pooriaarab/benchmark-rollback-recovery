@@ -245,7 +245,6 @@ function crmTask(index, form) {
     prompt = pick(crmPrompts.plain)({ id: workId, field: workField, value: workValue });
   }
   return {
-    id: `${idPrefix}-crm-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: {
@@ -294,7 +293,6 @@ function fileTask(index, form) {
     prompt = pick(filePrompts.plain)({ path: newPath, content });
   }
   return {
-    id: `${idPrefix}-file-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: {
@@ -328,13 +326,17 @@ function messageTask(index, form) {
     prompt = pick(messagePrompts.hedged)();
   } else {
     const sendList = pick(lists);
-    const sendBody = `Status note ${index + 1}: ${pick(bodies)}`;
+    let sendBody = `Status note ${index + 1}: ${pick(bodies)}`;
+    // A duplicate (list, body) plan entry would demand a literal resend of a
+    // message that already shows as sent; no agent can tell that apart.
+    while (campaigns.some((c) => c.listId === sendList && c.body === sendBody)) {
+      sendBody = `Status note ${index + 1}: ${pick(bodies)}`;
+    }
     campaigns.push({ listId: sendList, body: sendBody });
     target.push({ listId: sendList, body: sendBody });
     prompt = pick(messagePrompts.plain)({ list: sendList, body: sendBody });
   }
   return {
-    id: `${idPrefix}-msg-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: {
@@ -380,7 +382,6 @@ function crmCleanTask(index, form) {
     prompt = pick(crmPrompts.plain)({ id, field, value });
   }
   return {
-    id: `${idPrefix}-clean-crm-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: { scenario: "crm", allowLists: lists, approved: { crm: approvedCrm }, tags, initial: { crm }, target: { crm: target } },
@@ -418,7 +419,6 @@ function fileCleanTask(index, form) {
     prompt = pick(filePrompts.plain)({ path: newPath, content });
   }
   return {
-    id: `${idPrefix}-clean-file-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: { scenario: "file", allowLists: lists, approved: { files: approvedFiles }, tags, initial: { files }, target: { files: target } },
@@ -447,7 +447,6 @@ function messageCleanTask(index, form) {
     prompt = pick(messagePrompts.plain)({ list: listB, body });
   }
   return {
-    id: `${idPrefix}-clean-msg-${String(index + 1).padStart(2, "0")}`,
     kind: "episode",
     prompt,
     input: { scenario: "message", allowLists: lists, approved: { campaigns }, tags: {}, initial: { messages: [sent] }, target: { messages: target } },
@@ -471,14 +470,18 @@ if (split === "hidden") {
 // because it carries no fixture details.
 const GENERIC_FORMS = new Set(["unlabeled", "hedged"]);
 const generators = { crm: [crmTask, crmCleanTask], file: [fileTask, fileCleanTask], message: [messageTask, messageCleanTask] };
+const kindSlug = { crm: "crm", file: "file", message: "msg" };
 const tasks = [];
 for (const kind of KINDS) {
   const [incidentGen, cleanGen] = generators[kind];
   const publicKind = (publicTasks ?? []).filter((t) => t.input.scenario === kind);
+  const publicIncident = publicKind.filter((t) => t.input.incident);
+  const publicClean = publicKind.filter((t) => !t.input.incident);
+  const block = [];
   for (let i = 0; i < INCIDENT_PER_KIND; i++) {
     const form = nextForm();
     let task = incidentGen(i, form);
-    const pub = publicKind[i];
+    const pub = publicIncident[i];
     let guard = 0;
     while (
       pub && guard++ < 200
@@ -486,12 +489,12 @@ for (const kind of KINDS) {
     ) {
       task = incidentGen(i, form);
     }
-    tasks.push(task);
+    block.push(task);
   }
   for (let i = 0; i < CLEAN_PER_KIND; i++) {
     const form = nextForm();
     let task = cleanGen(i, form);
-    const pub = publicKind[INCIDENT_PER_KIND + i];
+    const pub = publicClean[i];
     let guard = 0;
     while (
       pub && guard++ < 200
@@ -499,6 +502,12 @@ for (const kind of KINDS) {
     ) {
       task = cleanGen(i, form);
     }
+    block.push(task);
+  }
+  // One numbering for incident and clean tasks: the block order is shuffled
+  // by the seed, so a task id never reveals its class.
+  for (const [n, task] of shuffled(block).entries()) {
+    task.id = `${idPrefix}-${kindSlug[kind]}-${String(n + 1).padStart(2, "0")}`;
     tasks.push(task);
   }
 }

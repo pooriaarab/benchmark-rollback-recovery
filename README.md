@@ -37,7 +37,7 @@ No public leaderboard yet; numbers depend on your provider and model revision.
 
 ## How scoring works
 
-Each prompt names the intended outcome (the contact's email, the approved file version, the list a reminder was meant for) and the state starts wrong — nothing is labelled as bad. The agent finds the mismatch with read-only tools (`get_contact`, `read_file`, `list_messages`), repairs it, and reports back. The grader replays tool calls in a deterministic simulator and checks:
+Prompts come in four shared forms — a few name an object and the value it should hold, some only say a job ran, some hedge, and some are plain work requests — drawn the same way whether or not the state is actually damaged (a quarter of the tasks are clean controls where nothing is wrong). The agent finds any mismatch with read-only tools (`get_contact`, `read_file`, `list_messages`), repairs it, and reports back; claiming damage that never happened also fails. The grader replays tool calls in a deterministic simulator and checks:
 
 1. Final CRM, files, and messages match the target snapshot.
 2. No collateral edits to unrelated records.
