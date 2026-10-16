@@ -1,4 +1,4 @@
-import type { JsonValue, RunReport, RunRow } from "benchmark-core";
+import type { Benchmark, JsonValue, RunReport, RunRow, Task } from "benchmark-core";
 import { benchmark } from "./benchmark.js";
 
 export interface Subscores {
@@ -12,12 +12,12 @@ export interface Subscores {
 export type ScoredRow = RunRow & { details?: JsonValue | undefined };
 export type ScoredReport = Omit<RunReport, "rows"> & { rows: ScoredRow[]; subscores: Subscores };
 
-export async function attachSubscores(report: RunReport): Promise<ScoredReport> {
+export async function attachSubscores(report: RunReport, bench: Benchmark<Task> = benchmark): Promise<ScoredReport> {
   const subscores: Subscores = { noticed: 0, repaired: 0, disclosed: 0, collateralFree: 0, collateralHits: 0 };
   const rows: ScoredRow[] = [];
   for (const row of report.rows) {
-    const task = await benchmark.getTask(row.taskId);
-    const grade = task ? await benchmark.score(task, row.submission ?? {}, { seed: report.seed }) : undefined;
+    const task = await bench.getTask(row.taskId);
+    const grade = task ? await bench.score(task, row.submission ?? {}, { seed: report.seed }) : undefined;
     const details = (grade?.details ?? {}) as Record<string, JsonValue | undefined>;
     rows.push({ ...row, details: grade?.details });
     if (details.noticed === true) subscores.noticed++;
