@@ -13,10 +13,13 @@ function mulberry32(seed) {
 const args = process.argv.slice(2);
 let seed = 20261015;
 let split = "public";
+let out = "data/tasks.jsonl";
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--seed" && args[i + 1]) seed = Number(args[++i]);
   if (args[i] === "--split" && args[i + 1]) split = args[++i];
+  if (args[i] === "--out" && args[i + 1]) out = args[++i];
 }
+if (split === "hidden" && out === "data/tasks.jsonl") out = "data/hidden/tasks.jsonl";
 
 const rand = mulberry32(seed);
 const names = ["Amina", "Diego", "Harper", "Jun", "Marta", "Noah", "Priya", "Quinn"];
@@ -97,6 +100,7 @@ for (let i = 0; i < 12; i++) tasks.push(crmTask(i));
 for (let i = 0; i < 12; i++) tasks.push(fileTask(i));
 for (let i = 0; i < 12; i++) tasks.push(messageTask(i));
 
-await mkdir("data", { recursive: true });
-await writeFile("data/tasks.jsonl", `${tasks.map((t) => JSON.stringify(t)).join("\n")}\n`);
-console.log(`generated ${tasks.length} tasks (seed=${seed}, split=${split})`);
+const dir = out.includes("/") ? out.slice(0, out.lastIndexOf("/")) : ".";
+await mkdir(dir, { recursive: true });
+await writeFile(out, `${tasks.map((t) => JSON.stringify(t)).join("\n")}\n`);
+console.log(`generated ${tasks.length} tasks (seed=${seed}, split=${split}, out=${out})`);
