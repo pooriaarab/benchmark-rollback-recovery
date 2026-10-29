@@ -1,0 +1,5 @@
+\begin{figure}[ht]\centering
+\begin{tikzpicture}\begin{axis}[xtick={0,...,10},xticklabels={Empty,Constant,Echo,Refuse,First tool,Oracle,Bad,Visible,No report,No tags,No repair},x tick label style={rotate=35,anchor=east},ylabel={Full pass (percent)},ymin=0,ymax=110,height=6cm]
+\addplot[only marks,okblue,error bars/.cd,y dir=both,y explicit] table[x=x,y=value,y error minus=low,y error plus=high,col sep=comma]{data/baselines.generated.csv};
+\end{axis}\end{tikzpicture}
+\caption{Scripted recovery separates from trivial controls. Missing reports and missing tags lower complete recovery for different reasons. Bars show task-level Wilson intervals, not learned-model uncertainty. Oracle denotes fixture access.}\end{figure}

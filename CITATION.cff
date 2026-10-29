@@ -17,3 +17,12 @@ keywords:
   - llm-evaluation
   - agent-evaluation
   - deterministic-grader
+preferred-citation:
+  type: report
+  title: "Rollback Recovery: Measuring Repair, Disclosure, and Restraint After Agent Errors"
+  authors:
+    - family-names: Arab
+      given-names: Pooria
+      orcid: "https://orcid.org/0009-0005-9964-6841"
+  year: 2026
+  url: "https://github.com/pooriaarab/benchmark-rollback-recovery/tree/main/paper"

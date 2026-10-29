@@ -1,0 +1,11 @@
+{
+  "replayedBaselineRows": 528,
+  "replayedSimulatedRows": 24000,
+  "repeatedConditions": 11,
+  "rawSummaryAgreement": true,
+  "staleStateObserved": true,
+  "metadataMatches": true,
+  "pdfTextChecks": true,
+  "pages": 9,
+  "pdfSha256": "18a9ff05e938c650095a17059b50b8c11d866c32ff49bb60704e4a77f91e4fd4"
+}

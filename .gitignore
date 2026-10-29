@@ -3,3 +3,10 @@ dist/
 artifacts/
 data/hidden/
 *.tgz
+paper/*.pdf
+paper/*.log
+paper/*.blg
+paper/*.aux
+paper/*.bbl
+paper/neurips_2026.sty
+paper/.style.zip

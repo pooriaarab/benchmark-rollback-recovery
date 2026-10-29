@@ -1,0 +1,6 @@
+\begin{figure}[ht]\centering
+\begin{tikzpicture}\begin{axis}[ybar stacked,bar width=24pt,xtick={0,1,2},xticklabels={Contacts,Files,Messages},ylabel={Episode count},ymin=0,ymax=19,legend style={at={(.5,1)},anchor=north,legend columns=2}]
+\addplot[fill=okorange] table[x=x,y=incident,col sep=comma]{data/coverage.generated.csv};
+\addplot[fill=okblue] table[x=x,y=clean,col sep=comma]{data/coverage.generated.csv};\legend{Incident,Clean}
+\end{axis}\end{tikzpicture}
+\caption{The task census covers each domain equally. Incident tasks outnumber clean controls. Counts describe the fixed task set, so they have no sampling intervals.}\label{fig:coverage}\end{figure}
