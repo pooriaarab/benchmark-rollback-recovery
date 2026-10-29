@@ -1,5 +1,7 @@
 # benchmark-rollback-recovery
 
+Paper: [10.5281/zenodo.23752421](https://doi.org/10.5281/zenodo.23752421)
+
 [![npm](https://img.shields.io/npm/v/benchmark-rollback-recovery)](https://www.npmjs.com/package/benchmark-rollback-recovery) [![downloads](https://img.shields.io/npm/dm/benchmark-rollback-recovery)](https://www.npmjs.com/package/benchmark-rollback-recovery) [![license](https://img.shields.io/npm/l/benchmark-rollback-recovery)](./LICENSE) [![types](https://img.shields.io/badge/TypeScript-types-3178c6)](#sdk)
 
 [AI Benchmark Index](https://private-repo-337e.com/benchmarks/benchmark-rollback-recovery) · [npm](https://www.npmjs.com/package/benchmark-rollback-recovery) · [API](#http-api) · [MCP](#model-context-protocol)
