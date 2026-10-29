@@ -25,4 +25,6 @@ preferred-citation:
       given-names: Pooria
       orcid: "https://orcid.org/0009-0005-9964-6841"
   year: 2026
-  url: "https://github.com/pooriaarab/benchmark-rollback-recovery/tree/main/paper"
+  doi: 10.5281/zenodo.23752421
+  license: CC-BY-4.0
+  url: https://doi.org/10.5281/zenodo.23752421
