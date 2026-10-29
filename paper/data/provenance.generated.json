@@ -1,0 +1,17 @@
+{
+  "source_commit": "ca4058d1903df96c52c02206b60806881240a0e5",
+  "prereg_commit": "a5c91780d4e6a3787717659ecd0cdfaad2777717",
+  "node": "v22.23.4",
+  "files": {
+    "data/tasks.jsonl": "6e2a6445d36b9fff007790ba78acb0918ee956b488a96e648c18253892fd7cc3",
+    "package-lock.json": "a256b990f0fa0faf69160370643329f3afa4ac39b9e852148c5cd698223663fe",
+    "src/rollback.ts": "fc6255c9ba75a3e8834568dccfd6d4bd873479913be007dfa3de0df0f815b8ff",
+    "src/benchmark.ts": "71f326ec557f79a593e924b34f2ca1920ef7f9f5548c1dcc0dc3f76ef7fa5368",
+    "src/index.ts": "191ec7d7873e71f9a4b0e07d6ecad35eebdac109d337a3b908fdf92a1293222b",
+    "scripts/e2e.mjs": "f186916527b6554e92eaf5f360e8a2640b62c74aa98309c83411a0f7e6341c7a",
+    "paper/PREREG.md": "1179b4c793c0a8664e73596e75551cebb0317a12c0502972a4eefcf30d0440b6",
+    "paper/scripts/run.mjs": "ec08b983dfabecbfb53da6cb2f8fdbe4820a096ce189895e643768d4b46105fa",
+    "paper/template/stats.mjs": "05f32655ef8503e62e4f5aa54caacdd7a4f6f3be4920871170de57142da8256f"
+  },
+  "run_hash": "b237750afa71f5232f538cabef7488b507a3348a118539d1d7e26f0a70a35c71"
+}
